@@ -18,8 +18,9 @@ from utils import categorical_accuracy
 _MODALITIES = ["textual", "numerical", "temporal", "visual", "spatial"]
 
 
-def run_once(model, optimizer, loss_function, X, Y, split_idc, train=False):
-    Y_hat = model([X, split_idc])
+def run_once(model, optimizer, loss_function, X, Y,
+             split_idc, device, train=False):
+    Y_hat = model([X, split_idc, device]).to("cpu")
 
     loss = loss_function(Y_hat[split_idc], Y[split_idc])
     acc = categorical_accuracy(Y_hat[split_idc], Y[split_idc])
@@ -33,7 +34,7 @@ def run_once(model, optimizer, loss_function, X, Y, split_idc, train=False):
 
 
 def train_test_model(model, optimizer, loss, X, Y, splits, epoch,
-                     output_writer, flags):
+                     output_writer, device, flags):
     if flags.save_output:
         output_writer.writerow(["epoch", "training_loss", "training_accurary",
                                 "validation_loss", "validation_accuracy",
@@ -48,20 +49,23 @@ def train_test_model(model, optimizer, loss, X, Y, splits, epoch,
     if flags.test:
         train_idc = np.concatenate([train_idc, valid_idc])
 
+    model.to(device)
     Y = torch.LongTensor(Y)
     for epoch in range(epoch, epoch+flags.num_epoch):
         print("[TRAIN] %3.d " % epoch, end='', flush=True)
 
         model.train()
         _, train_loss, train_acc = run_once(model, optimizer, loss,
-                                            X, Y, train_idc, train=True)
+                                            X, Y, train_idc, device,
+                                            train=True)
 
         valid_loss = -1
         valid_acc = -1
         if not flags.test:
             model.eval()
             _, valid_loss, valid_acc = run_once(model, None, loss,
-                                                X, Y, valid_idc)
+                                                X, Y, valid_idc,
+                                                device)
 
             print(" - loss: {:.4f} / acc: {:.4f} \t [VALID] loss: {:.4f} "
                   "/ acc: {:.4f}".format(train_loss, train_acc,
@@ -82,7 +86,8 @@ def train_test_model(model, optimizer, loss, X, Y, splits, epoch,
         model.eval()
 
         Y_hat, test_loss, test_acc = run_once(model, None, loss,
-                                              X, Y, test_idc)
+                                              X, Y, test_idc,
+                                              device)
 
         print("[TEST] loss: {:.4f} / acc: {:.4f}".format(test_loss,
                                                          test_acc))
@@ -101,7 +106,7 @@ def train_test_model(model, optimizer, loss, X, Y, splits, epoch,
     return (epoch, predictions_array)
 
 
-def main(dataset, output_writer, label_writer, flags):
+def main(dataset, output_writer, label_writer, device, flags):
     indices = dataset['indices']
     splits = (dataset['train_idc'],
               dataset['test_idc'],
@@ -139,6 +144,8 @@ def main(dataset, output_writer, label_writer, flags):
 
     epoch = 1
     if flags.load_checkpoint is not None:
+        model.to("cpu")
+
         print("[LOAD] Loading model state")
         checkpoint = torch.load(flags.load_checkpoint)
         model.load_state_dict(checkpoint['model_state_dict'])
@@ -148,7 +155,8 @@ def main(dataset, output_writer, label_writer, flags):
 
     epoch, predictions = train_test_model(model, optimizer, loss,
                                           X, Y, splits, epoch,
-                                          output_writer, flags)
+                                          output_writer, device,
+                                          flags)
 
     if flags.test and flags.save_output:
         entity_to_int_map = indices[1]
@@ -170,6 +178,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--batchsize", help="Number of samples in batch",
                         default=32, type=int)
+    parser.add_argument("--device", help="Device to run on (e.g., 'cuda:0')",
+                        default="cpu", type=str)
     parser.add_argument("-i", "--input", help="HDT graph or pickled dataset",
                         required=True)
     parser.add_argument("--load_checkpoint", help="Load model state from disk",
@@ -227,8 +237,15 @@ if __name__ == "__main__":
             label_writer.writerow(['X', 'Y_hat', 'Y'])
             print("[SAVE] Writing labels to %s" % path)
 
+    device = torch.device(flags.device)
+    if device.type.startswith("cuda") and not torch.cuda.is_available():
+        device = torch.device("cpu")
+        print("[DEVICE] device %s not available - falling back to 'cpu'" %
+              flags.device)
+
     model, optimizer, loss, epoch = main(data, output_writer,
-                                         label_writer, flags)
+                                         label_writer, device,
+                                         flags)
 
     if flags.save_checkpoint:
         path = filename + "_state_%d.pkl" % epoch

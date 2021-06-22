@@ -125,7 +125,7 @@ class NeuralEncoders(nn.Module):
                 pos = pos_new
 
     def forward(self, X):
-        data, split_idc = X
+        data, split_idc, device = X
 
         Y = torch.zeros((self.num_samples,
                          self.out_dim), dtype=torch.float32)
@@ -162,6 +162,7 @@ class NeuralEncoders(nn.Module):
 
                     X_batch = torch.stack(zero_pad(
                         [X[b] for b in batch_idx], time_dim), axis=0)
+                    X_batch.to(device)
 
                     Y[batch_sample_idx, pos_begin:pos_end] = encoder(X_batch)
 
