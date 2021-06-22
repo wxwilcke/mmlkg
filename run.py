@@ -142,77 +142,41 @@ def main(dataset, flags):
             continue
 
         data = dataset[modality]
-        if modality == "textual":
-            for mset in data:
-                datatype = mset[0]
-                print("[DTYPE] %s" % datatype)
-
+        for mset in data:
+            datatype = mset[0]
+            print("[DTYPE] %s" % datatype)
+            if modality == "numerical":
+                inter_dim = 4
+                encoder = FC(input_dim=1, output_dim=inter_dim)
+            if modality == "textual":
                 inter_dim = 128
                 time_dim = mset[-1]
                 f_in = mset[1][0].shape[1-time_dim]  # vocab size
                 encoder = CharCNN(features_in=f_in,
                                   features_out=inter_dim)
-                mlp = MLP(input_dim=inter_dim, output_dim=num_classes)
-                model = nn.Sequential(encoder, mlp)
-
-                train_test_model(model, mset, entity_to_class_map,
-                                 (train_idc, test_idc, valid_idc), flags)
-        if modality == "numerical":
-            for mset in data:
-                datatype = mset[0]
-                print("[DTYPE] %s" % datatype)
-
-                inter_dim = 4
-                encoder = FC(input_dim=1, output_dim=inter_dim)
-                mlp = MLP(input_dim=inter_dim, output_dim=num_classes)
-                model = nn.Sequential(encoder, mlp)
-
-                train_test_model(model, mset, entity_to_class_map,
-                                 (train_idc, test_idc, valid_idc), flags)
-        if modality == "temporal":
-            for mset in data:
-                datatype = mset[0]
-                print("[DTYPE] %s" % datatype)
-
+            if modality == "temporal":
                 inter_dim = 16
                 f_in = mset[1][0].shape[0]
                 encoder = FC(input_dim=f_in, output_dim=inter_dim)
-                mlp = MLP(input_dim=inter_dim, output_dim=num_classes)
-                model = nn.Sequential(encoder, mlp)
-
-                train_test_model(model, mset, entity_to_class_map,
-                                 (train_idc, test_idc, valid_idc), flags)
-        if modality == "visual":
-            for mset in data:
-                datatype = mset[0]
-                print("[DTYPE] %s" % datatype)
-
+            if modality == "visual":
                 inter_dim = 128
                 img_Ch, img_H, img_W = mset[1][0].shape
                 encoder = ImageCNN(channels_in=img_Ch,
                                    width=img_W,
                                    height=img_H,
                                    features_out=inter_dim)
-                mlp = MLP(input_dim=inter_dim, output_dim=num_classes)
-                model = nn.Sequential(encoder, mlp)
-
-                train_test_model(model, mset, entity_to_class_map,
-                                 (train_idc, test_idc, valid_idc), flags)
-        if modality == "spatial":
-            for mset in data:
-                datatype = mset[0]
-                print("[DTYPE] %s" % datatype)
-
+            if modality == "spatial":
                 inter_dim = 128
                 time_dim = mset[-1]
                 f_in = mset[1][0].shape[1-time_dim]  # vocab size
                 encoder = GeomCNN(features_in=f_in,
                                   features_out=inter_dim)
-                mlp = MLP(input_dim=inter_dim, output_dim=num_classes)
-                model = nn.Sequential(encoder, mlp)
 
-                train_test_model(model, mset, entity_to_class_map,
-                                 (train_idc, test_idc, valid_idc), flags)
+            mlp = MLP(input_dim=inter_dim, output_dim=num_classes)
+            model = nn.Sequential(encoder, mlp)
+
+            train_test_model(model, mset, entity_to_class_map,
+                             (train_idc, test_idc, valid_idc), flags)
 
 
 if __name__ == "__main__":
@@ -234,6 +198,8 @@ if __name__ == "__main__":
                         default=50, type=int)
     parser.add_argument("--lr", help="Initial learning rate",
                         default=0.01, type=float)
+    parser.add_argument("--save_dataset", help="Save dataset to disk",
+                        action="store_true")
     parser.add_argument("--save_output", help="Save run to disk",
                         action="store_true")
     parser.add_argument("--save_model", help="Save model to disk",
