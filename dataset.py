@@ -33,7 +33,7 @@ def generate_indices(g):
 
         entity_to_class_map.append(o_int)
 
-    return (entity_to_class_map, entity_to_int_map)
+    return (entity_to_class_map, entity_to_int_map, class_to_int_map)
 
 
 def generate(hdtfile, flags):
@@ -44,7 +44,7 @@ def generate(hdtfile, flags):
     g = HDTStore(hdtfile)
 
     indices = generate_indices(g)
-    entity_to_class_map, entity_to_int_map = indices
+    entity_to_class_map, entity_to_int_map, _ = indices
 
     train_idc, test_idc, valid_idc = mksplits(entity_to_class_map,
                                               flags.splits)
@@ -108,9 +108,10 @@ def generate(hdtfile, flags):
 
             dataset[modality] = data
 
-    print('Saving data to disk...')
-    with open('./%s.pkl' % hdtfile, 'wb') as f:
-        pickle.dump(dataset, f)
+    if flags.save_dataset:
+        print('Saving data to disk...')
+        with open('./%s.pkl' % hdtfile, 'wb') as f:
+            pickle.dump(dataset, f)
 
     return dataset
 

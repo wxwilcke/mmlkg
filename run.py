@@ -1,7 +1,6 @@
 #!/usr/bin.env python
 
 import argparse
-import csv
 import pickle
 import sys
 
@@ -11,68 +10,34 @@ import torch.nn as nn
 import torch.optim as optim
 
 import dataset
-from models import CharCNN, FC, GeomCNN, ImageCNN, MLP
-from utils import (categorical_accuracy, mkbatches, mkbatches_varlength,
-                   zero_pad)
+from models import MLP, NeuralEncoders
+from tsv import TSV
+from utils import categorical_accuracy
 
 
 _MODALITIES = ["textual", "numerical", "temporal", "visual", "spatial"]
 
 
-def batch_run(model, optimizer, loss, X, X_length, X_idc, split_idc,
-              time_dim, is_varlength, Y, batch_size, train=False):
-    # skip entities without this modality
-    split_idc = [i for i in split_idc if i in X_idc]
-    # match entity indices to sample indices
-    X_split_idc = [np.where(X_idc == i)[0][0] for i in split_idc]
+def run_once(model, optimizer, loss_function, X, Y, split_idc, train=False):
+    Y_hat = model([X, split_idc])
 
-    X = [X[i] for i in X_split_idc]
-    X_length = [X_length[i] for i in X_split_idc]
+    loss = loss_function(Y_hat[split_idc], Y[split_idc])
+    acc = categorical_accuracy(Y_hat[split_idc], Y[split_idc])
 
-    batches = list()
-    if is_varlength:
-        batches = mkbatches_varlength(split_idc,
-                                      X_length,
-                                      batch_size)
-    else:
-        batches = mkbatches(split_idc, batch_size)
+    if train:
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
 
-    num_batches = len(batches)
-    loss_list = list()
-    acc_list = list()
-    for i, (batch_idx, batch_sample_idx) in enumerate(batches, 1):
-        batch_str = " - batch %2.d / %d (size %d)" % (i,
-                                                      num_batches,
-                                                      batch_size)
-        print(batch_str, end='\b'*len(batch_str), flush=True)
-
-        X_batch = torch.stack(zero_pad(
-            [X[b] for b in batch_idx], time_dim), axis=0)
-        Y_batch = Y[batch_sample_idx]
-
-        Y_hat = model(X_batch)
-
-        batch_loss = loss(Y_hat, Y_batch)
-        batch_acc = categorical_accuracy(Y_hat, Y_batch)
-
-        if train:
-            optimizer.zero_grad()
-            batch_loss.backward()
-            optimizer.step()
-
-        batch_loss = float(batch_loss)
-        batch_acc = float(batch_acc)
-        loss_list.append(batch_loss)
-        acc_list.append(batch_acc)
-
-    return (np.mean(loss_list), np.mean(acc_list))
+    return (Y_hat, float(loss), float(acc))
 
 
-def train_test_model(model, X, Y, splits, flags):
-    _, X, X_length, X_idc, is_varlength, time_dim = X
-    X = [torch.Tensor(sample) for sample in X]
-    X_idc = np.array(X_idc)
-    Y = torch.LongTensor(Y)
+def train_test_model(model, optimizer, loss, X, Y, splits, epoch,
+                     output_writer, flags):
+    if flags.save_output:
+        output_writer.writerow(["epoch", "training_loss", "training_accurary",
+                                "validation_loss", "validation_accuracy",
+                                "test_loss", "test_accuracy"])
 
     train_idc, test_idc, valid_idc = splits
     if flags.shuffle_data:
@@ -83,27 +48,20 @@ def train_test_model(model, X, Y, splits, flags):
     if flags.test:
         train_idc = np.concatenate([train_idc, valid_idc])
 
-    optimizer = optim.Adam(model.parameters(),
-                           lr=flags.lr,
-                           weight_decay=flags.weight_decay)
-    loss = nn.CrossEntropyLoss()
-
-    batch_size = flags.batchsize
-    for epoch in range(flags.num_epoch):
-        print("[TRAIN] %3.d " % (epoch+1), end='', flush=True)
+    Y = torch.LongTensor(Y)
+    for epoch in range(epoch, epoch+flags.num_epoch):
+        print("[TRAIN] %3.d " % epoch, end='', flush=True)
 
         model.train()
-        train_loss, train_acc = batch_run(model, optimizer, loss,
-                                          X, X_length, X_idc, train_idc,
-                                          time_dim, is_varlength, Y,
-                                          batch_size, train=True)
+        _, train_loss, train_acc = run_once(model, optimizer, loss,
+                                            X, Y, train_idc, train=True)
 
+        valid_loss = -1
+        valid_acc = -1
         if not flags.test:
             model.eval()
-            valid_loss, valid_acc = batch_run(model, None, loss,
-                                              X, X_length, X_idc, valid_idc,
-                                              time_dim, is_varlength, Y,
-                                              batch_size, train=False)
+            _, valid_loss, valid_acc = run_once(model, None, loss,
+                                                X, Y, valid_idc)
 
             print(" - loss: {:.4f} / acc: {:.4f} \t [VALID] loss: {:.4f} "
                   "/ acc: {:.4f}".format(train_loss, train_acc,
@@ -114,69 +72,98 @@ def train_test_model(model, X, Y, splits, flags):
                                                          train_acc),
                   flush=True)
 
+        if flags.save_output:
+            output_writer.writerow([epoch,
+                                    train_loss, train_acc,
+                                    valid_loss, valid_acc])
+
+    predictions_array = None
     if flags.test:
         model.eval()
 
-        test_loss, test_acc = batch_run(model, _, loss,
-                                        X, X_length, X_idc, test_idc,
-                                        time_dim, is_varlength, Y,
-                                        batch_size, train=False)
+        Y_hat, test_loss, test_acc = run_once(model, None, loss,
+                                              X, Y, test_idc)
 
         print("[TEST] loss: {:.4f} / acc: {:.4f}".format(test_loss,
                                                          test_acc))
 
+        if flags.save_output:
+            output_writer.writerow([-1, -1, -1, -1, -1,
+                                    test_loss, test_acc])
 
-def main(dataset, flags):
+            # save predictions
+            predictions = Y_hat.max(axis=1)[1]
+            predictions_array = np.stack([test_idc,
+                                          predictions[test_idc],
+                                          Y[test_idc]], axis=1)
+            predictions_array[predictions_array[:, 0].argsort()]  # sort by idc
+
+    return (epoch, predictions_array)
+
+
+def main(dataset, output_writer, label_writer, flags):
     indices = dataset['indices']
-    train_idc = dataset['train_idc']
-    test_idc = dataset['test_idc']
-    valid_idc = dataset['valid_idc']
+    splits = (dataset['train_idc'],
+              dataset['test_idc'],
+              dataset['valid_idc'])
 
-    entity_to_class_map = indices[0]
-    num_classes = len(np.unique(entity_to_class_map))
+    Y = indices[0]
+    num_classes = len(np.unique(Y))
+    num_samples = len(Y)
+
+    X = dict()
     for modality in flags.modalities:
-        print("\n[%s]" % modality.upper())
-        if modality not in dataset.keys()\
-           or len(dataset[modality]) <= 0:
-            print(" No %s information found" % modality)
+        if modality not in dataset.keys():
+            print("[MODALITY] %s\t not detected" % modality)
             continue
 
-        data = dataset[modality]
-        for mset in data:
+        X[modality] = dataset[modality]
+        for mset in dataset[modality]:
             datatype = mset[0]
-            print("[DTYPE] %s" % datatype)
-            if modality == "numerical":
-                inter_dim = 4
-                encoder = FC(input_dim=1, output_dim=inter_dim)
-            if modality == "textual":
-                inter_dim = 128
-                time_dim = mset[-1]
-                f_in = mset[1][0].shape[1-time_dim]  # vocab size
-                encoder = CharCNN(features_in=f_in,
-                                  features_out=inter_dim)
-            if modality == "temporal":
-                inter_dim = 16
-                f_in = mset[1][0].shape[0]
-                encoder = FC(input_dim=f_in, output_dim=inter_dim)
-            if modality == "visual":
-                inter_dim = 128
-                img_Ch, img_H, img_W = mset[1][0].shape
-                encoder = ImageCNN(channels_in=img_Ch,
-                                   width=img_W,
-                                   height=img_H,
-                                   features_out=inter_dim)
-            if modality == "spatial":
-                inter_dim = 128
-                time_dim = mset[-1]
-                f_in = mset[1][0].shape[1-time_dim]  # vocab size
-                encoder = GeomCNN(features_in=f_in,
-                                  features_out=inter_dim)
+            print("[MODALITY] %s\t detected %s" % (modality,
+                                                   datatype))
 
-            mlp = MLP(input_dim=inter_dim, output_dim=num_classes)
-            model = nn.Sequential(encoder, mlp)
+    if len(X) <= 0:
+        print("No data found - Exiting")
+        sys.exit(1)
 
-            train_test_model(model, mset, entity_to_class_map,
-                             (train_idc, test_idc, valid_idc), flags)
+    encoders = NeuralEncoders(X, num_samples, flags)
+    mlp = MLP(input_dim=encoders.out_dim,
+              output_dim=num_classes)
+    model = nn.Sequential(encoders, mlp)
+
+    optimizer = optim.Adam(model.parameters(),
+                           lr=flags.lr,
+                           weight_decay=flags.weight_decay)
+    loss = nn.CrossEntropyLoss()
+
+    epoch = 1
+    if flags.load_checkpoint is not None:
+        print("[LOAD] Loading model state")
+        checkpoint = torch.load(flags.load_checkpoint)
+        model.load_state_dict(checkpoint['model_state_dict'])
+        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        epoch = checkpoint['epoch']
+        loss = checkpoint['loss']
+
+    epoch, predictions = train_test_model(model, optimizer, loss,
+                                          X, Y, splits, epoch,
+                                          output_writer, flags)
+
+    if flags.test and flags.save_output:
+        entity_to_int_map = indices[1]
+        class_to_int_map = indices[2]
+
+        int_to_entity_map = {v: k for k, v in entity_to_int_map.items()}
+        int_to_class_map = {v: k for k, v in class_to_int_map.items()}
+        for e_idx, c_hat_idx, c_idx in predictions:
+            e_str = int_to_entity_map[e_idx]
+            c_hat_str = int_to_class_map[c_hat_idx]
+            c_str = int_to_class_map[c_idx]
+
+            label_writer.writerow([e_str, c_hat_str, c_str])
+
+    return (model, optimizer, loss, epoch)
 
 
 if __name__ == "__main__":
@@ -185,15 +172,12 @@ if __name__ == "__main__":
                         default=32, type=int)
     parser.add_argument("-i", "--input", help="HDT graph or pickled dataset",
                         required=True)
+    parser.add_argument("--load_checkpoint", help="Load model state from disk",
+                        default=None)
     parser.add_argument("-m", "--modalities", nargs='*',
                         help="Which modalities to include",
                         choices=[m.lower() for m in _MODALITIES],
                         default=_MODALITIES)
-    parser.add_argument("--mode", nargs='?', help="Train a model for each "
-                        + "datatype, for each modallity, or once for the "
-                        + "entire dataset",
-                        choices=["datatype", "modality", "dataset"],
-                        default="datatype")
     parser.add_argument("--num_epoch", help="Number of training epoch",
                         default=50, type=int)
     parser.add_argument("--lr", help="Initial learning rate",
@@ -202,7 +186,7 @@ if __name__ == "__main__":
                         action="store_true")
     parser.add_argument("--save_output", help="Save run to disk",
                         action="store_true")
-    parser.add_argument("--save_model", help="Save model to disk",
+    parser.add_argument("--save_checkpoint", help="Save model to disk",
                         action="store_true")
     parser.add_argument("--shuffle_data", help="Shuffle samples",
                         action=argparse.BooleanOptionalAction,
@@ -216,13 +200,13 @@ if __name__ == "__main__":
     parser.add_argument("--weight_decay", help="Weight decay",
                         default=1e-5, type=float)
 
-    args = parser.parse_args()
+    flags = parser.parse_args()
 
-    filename = args.input
+    filename = flags.input
     data = None
     if filename.endswith(".hdt"):
         print("[READ] Found HDT file")
-        data = dataset.generate(filename, args)
+        data = dataset.generate(filename, flags)
     elif filename.endswith('.pkl'):
         print("[READ] Found pickled data")
         with open(filename, 'rb') as bf:
@@ -230,4 +214,26 @@ if __name__ == "__main__":
     else:
         sys.exit(1)
 
-    main(data, args)
+    output_writer = None
+    label_writer = None
+    if flags.save_output:
+        path = filename + "_output.tsv"
+        output_writer = TSV(path, mode='w')
+        print("[SAVE] Writing output to %s" % path)
+
+        if flags.test:
+            path = filename + "_labels.tsv"
+            label_writer = TSV(path, mode='w')
+            label_writer.writerow(['X', 'Y_hat', 'Y'])
+            print("[SAVE] Writing labels to %s" % path)
+
+    model, optimizer, loss, epoch = main(data, output_writer,
+                                         label_writer, flags)
+
+    if flags.save_checkpoint:
+        path = filename + "_state_%d.pkl" % epoch
+        torch.save({'epoch': epoch,
+                    'model_state_dict': model.state_dict(),
+                    'optimizer_state_dict': optimizer.state_dict(),
+                    'loss': loss}, path)
+        print("[SAVE] Writing model state to %s" % path)

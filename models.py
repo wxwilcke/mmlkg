@@ -2,9 +2,12 @@
 
 from math import sqrt
 
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as f
+
+from utils import mkbatches, mkbatches_varlength, zero_pad
 
 
 class FC(nn.Module):
@@ -59,6 +62,115 @@ class MLP(nn.Module):
     def init(self):
         for param in self.parameters():
             nn.init.uniform_(param)
+
+
+class NeuralEncoders(nn.Module):
+    def __init__(self,
+                 dataset,
+                 num_samples,
+                 flags):
+        """
+        Neural Encoder(s)
+
+        """
+        super().__init__()
+
+        self.num_samples = num_samples
+        self.batchsize = flags.batchsize
+        self.encoders = nn.ModuleDict()
+        self.positions = dict()
+        self.out_dim = 0
+
+        pos = 0
+        for modality in dataset.keys():
+            if len(dataset[modality]) <= 0:
+                continue
+
+            data = dataset[modality]
+            for mset in data:
+                datatype = mset[0].split('/')[-1]
+
+                if modality == "numerical":
+                    inter_dim = 4
+                    encoder = FC(input_dim=1, output_dim=inter_dim)
+                elif modality == "textual":
+                    inter_dim = 128
+                    time_dim = mset[-1]
+                    f_in = mset[1][0].shape[1-time_dim]  # vocab size
+                    encoder = CharCNN(features_in=f_in,
+                                      features_out=inter_dim)
+                elif modality == "temporal":
+                    inter_dim = 16
+                    f_in = mset[1][0].shape[0]
+                    encoder = FC(input_dim=f_in, output_dim=inter_dim)
+                elif modality == "visual":
+                    inter_dim = 128
+                    img_Ch, img_H, img_W = mset[1][0].shape
+                    encoder = ImageCNN(channels_in=img_Ch,
+                                       width=img_W,
+                                       height=img_H,
+                                       features_out=inter_dim)
+                elif modality == "spatial":
+                    inter_dim = 128
+                    time_dim = mset[-1]
+                    f_in = mset[1][0].shape[1-time_dim]  # vocab size
+                    encoder = GeomCNN(features_in=f_in,
+                                      features_out=inter_dim)
+
+                self.encoders[datatype] = encoder
+                self.out_dim += inter_dim
+
+                pos_new = pos + inter_dim
+                self.positions[datatype] = (pos, pos_new)
+                pos = pos_new
+
+    def forward(self, X):
+        data, split_idc = X
+
+        Y = torch.zeros((self.num_samples,
+                         self.out_dim), dtype=torch.float32)
+        for msets in data.values():
+            for mset in msets:
+                datatype, X, X_length, X_idc, is_varlength, time_dim = mset
+                datatype = datatype.split('/')[-1]
+                if datatype not in self.encoders.keys():
+                    continue
+
+                encoder = self.encoders[datatype]
+                pos_begin, pos_end = self.positions[datatype]
+
+                # skip entities without this modality
+                split_idc = [i for i in split_idc if i in X_idc]
+                # match entity indices to sample indices
+                X_split_idc = [np.where(X_idc == i)[0][0] for i in split_idc]
+
+                X = [torch.Tensor(X[i]) for i in X_split_idc]
+                X_length = [X_length[i] for i in X_split_idc]
+
+                batches = list()
+                if is_varlength:
+                    batches = mkbatches_varlength(split_idc,
+                                                  X_length,
+                                                  self.batchsize)
+                else:
+                    batches = mkbatches(split_idc, self.batchsize)
+
+                num_batches = len(batches)
+                for i, (batch_idx, batch_sample_idx) in enumerate(batches, 1):
+                    batch_str = " - batch %2.d / %d" % (i, num_batches)
+                    print(batch_str, end='\b'*len(batch_str), flush=True)
+
+                    X_batch = torch.stack(zero_pad(
+                        [X[b] for b in batch_idx], time_dim), axis=0)
+
+                    Y[batch_sample_idx, pos_begin:pos_end] = encoder(X_batch)
+
+        return Y
+
+    def init(self):
+        for encoder in self.encoders:
+            for param in encoder.parameters():
+                nn.init.uniform_(param)
 
 
 class CharCNN(nn.Module):

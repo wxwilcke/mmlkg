@@ -5,7 +5,7 @@ from rdflib import Literal
 
 
 def generate_data(g, indices, datatypes):
-    entity_to_class_map, entity_to_int_map = indices
+    entity_to_class_map, entity_to_int_map, _ = indices
     is_varlength = False
     time_dim = -1
 

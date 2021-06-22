@@ -10,7 +10,7 @@ VEC_LENGTH = 9
 
 
 def generate_data(g, indices, datatypes, time_dim=1):
-    entity_to_class_map, entity_to_int_map = indices
+    entity_to_class_map, entity_to_int_map, _ = indices
     is_varlength = True
 
     datatypes = list(datatypes)

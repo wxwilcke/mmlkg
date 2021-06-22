@@ -16,7 +16,7 @@ _VOCAB_MAX_IDX = len(_VOCAB)
 
 
 def generate_data(g, indices, datatypes):
-    entity_to_class_map, entity_to_int_map = indices
+    entity_to_class_map, entity_to_int_map, _ = indices
     is_varlength = True
     time_dim = 1
 
