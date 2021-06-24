@@ -18,12 +18,15 @@ from utils import categorical_accuracy
 _MODALITIES = ["textual", "numerical", "temporal", "visual", "spatial"]
 
 
-def run_once(model, optimizer, loss_function, X, Y,
-             split_idc, device, train=False):
-    Y_hat = model([X, split_idc, device]).to("cpu")
+def run_once(model, optimizer, loss_function, X,
+             samples, device, train=False):
+    samples_idc, Y = samples.T
 
-    loss = loss_function(Y_hat[split_idc], Y[split_idc])
-    acc = categorical_accuracy(Y_hat[split_idc], Y[split_idc])
+    Y = torch.LongTensor(Y)
+    Y_hat = model([X, samples_idc, device]).to("cpu")
+
+    loss = loss_function(Y_hat[samples_idc], Y)
+    acc = categorical_accuracy(Y_hat[samples_idc], Y)
 
     if train:
         optimizer.zero_grad()
@@ -33,30 +36,29 @@ def run_once(model, optimizer, loss_function, X, Y,
     return (Y_hat, float(loss), float(acc))
 
 
-def train_test_model(model, optimizer, loss, X, Y, splits, epoch,
+def train_test_model(model, optimizer, loss, X, splits, epoch,
                      output_writer, device, flags):
     if flags.save_output:
         output_writer.writerow(["epoch", "training_loss", "training_accurary",
                                 "validation_loss", "validation_accuracy",
                                 "test_loss", "test_accuracy"])
 
-    train_idc, test_idc, valid_idc = splits
+    training, testing, validation = splits
     if flags.shuffle_data:
-        np.random.shuffle(train_idc)
-        np.random.shuffle(test_idc)
-        np.random.shuffle(valid_idc)
+        np.random.shuffle(training)
+        np.random.shuffle(testing)
+        np.random.shuffle(validation)
 
     if flags.test:
-        train_idc = np.concatenate([train_idc, valid_idc])
+        training = np.concatenate([training, validation], axis=0)
 
     model.to(device)
-    Y = torch.LongTensor(Y)
     for epoch in range(epoch, epoch+flags.num_epoch):
         print("[TRAIN] %3.d " % epoch, end='', flush=True)
 
         model.train()
         _, train_loss, train_acc = run_once(model, optimizer, loss,
-                                            X, Y, train_idc, device,
+                                            X, training, device,
                                             train=True)
 
         valid_loss = -1
@@ -64,7 +66,7 @@ def train_test_model(model, optimizer, loss, X, Y, splits, epoch,
         if not flags.test:
             model.eval()
             _, valid_loss, valid_acc = run_once(model, None, loss,
-                                                X, Y, valid_idc,
+                                                X, validation,
                                                 device)
 
             print(" - loss: {:.4f} / acc: {:.4f} \t [VALID] loss: {:.4f} "
@@ -86,7 +88,7 @@ def train_test_model(model, optimizer, loss, X, Y, splits, epoch,
         model.eval()
 
         Y_hat, test_loss, test_acc = run_once(model, None, loss,
-                                              X, Y, test_idc,
+                                              X, testing,
                                               device)
 
         print("[TEST] loss: {:.4f} / acc: {:.4f}".format(test_loss,
@@ -98,23 +100,21 @@ def train_test_model(model, optimizer, loss, X, Y, splits, epoch,
 
             # save predictions
             predictions = Y_hat.max(axis=1)[1]
+            test_idc, Y = testing.T
             predictions_array = np.stack([test_idc,
                                           predictions[test_idc],
-                                          Y[test_idc]], axis=1)
+                                          Y], axis=1)
             predictions_array[predictions_array[:, 0].argsort()]  # sort by idc
 
     return (epoch, predictions_array)
 
 
 def main(dataset, output_writer, label_writer, device, flags):
-    indices = dataset['indices']
-    splits = (dataset['train_idc'],
-              dataset['test_idc'],
-              dataset['valid_idc'])
-
-    Y = indices[0]
-    num_classes = len(np.unique(Y))
-    num_samples = len(Y)
+    splits = (dataset['training'],
+              dataset['testing'],
+              dataset['validation'])
+    num_nodes = dataset['num_nodes']
+    num_classes = dataset['num_classes']
 
     X = dict()
     for modality in flags.modalities:
@@ -132,7 +132,7 @@ def main(dataset, output_writer, label_writer, device, flags):
         print("No data found - Exiting")
         sys.exit(1)
 
-    encoders = NeuralEncoders(X, num_samples, flags)
+    encoders = NeuralEncoders(X, num_nodes, flags)
     mlp = MLP(input_dim=encoders.out_dim,
               output_dim=num_classes)
     model = nn.Sequential(encoders, mlp)
@@ -154,22 +154,13 @@ def main(dataset, output_writer, label_writer, device, flags):
         loss = checkpoint['loss']
 
     epoch, predictions = train_test_model(model, optimizer, loss,
-                                          X, Y, splits, epoch,
+                                          X, splits, epoch,
                                           output_writer, device,
                                           flags)
 
     if flags.test and flags.save_output:
-        entity_to_int_map = indices[1]
-        class_to_int_map = indices[2]
-
-        int_to_entity_map = {v: k for k, v in entity_to_int_map.items()}
-        int_to_class_map = {v: k for k, v in class_to_int_map.items()}
         for e_idx, c_hat_idx, c_idx in predictions:
-            e_str = int_to_entity_map[e_idx]
-            c_hat_str = int_to_class_map[c_hat_idx]
-            c_str = int_to_class_map[c_idx]
-
-            label_writer.writerow([e_str, c_hat_str, c_str])
+            label_writer.writerow([e_idx, c_hat_idx, c_idx])
 
     return (model, optimizer, loss, epoch)
 
@@ -180,7 +171,8 @@ if __name__ == "__main__":
                         default=32, type=int)
     parser.add_argument("--device", help="Device to run on (e.g., 'cuda:0')",
                         default="cpu", type=str)
-    parser.add_argument("-i", "--input", help="HDT graph or pickled dataset",
+    parser.add_argument("-i", "--input", help="Pickled dataset or directory"
+                        + " with CSV files (generated by `generateInput.py`)",
                         required=True)
     parser.add_argument("--load_checkpoint", help="Load model state from disk",
                         default=None)
@@ -198,13 +190,9 @@ if __name__ == "__main__":
                         action="store_true")
     parser.add_argument("--save_checkpoint", help="Save model to disk",
                         action="store_true")
-    parser.add_argument("--shuffle_data", help="Shuffle samples",
+    parser.add_argument("--shuffle_data", help="Shuffle samples (True)",
                         action=argparse.BooleanOptionalAction,
                         default=True)
-    parser.add_argument("--splits", help="Split train/test/valid sets in"
-                        + " percentages of labeled samples",
-                        default=(60, 20, 20),
-                        action=dataset.StoreSplitsAction)
     parser.add_argument("--test", help="Report accuracy on test set",
                         action="store_true")
     parser.add_argument("--weight_decay", help="Weight decay",
@@ -212,28 +200,23 @@ if __name__ == "__main__":
 
     flags = parser.parse_args()
 
-    filename = flags.input
+    path = flags.input
     data = None
-    if filename.endswith(".hdt"):
-        print("[READ] Found HDT file")
-        data = dataset.generate(filename, flags)
-    elif filename.endswith('.pkl'):
+    if path.endswith('.pkl'):
         print("[READ] Found pickled data")
-        with open(filename, 'rb') as bf:
+        with open(path, 'rb') as bf:
             data = pickle.load(bf)
     else:
-        sys.exit(1)
+        data = dataset.generate_pickle(flags)
 
     output_writer = None
     label_writer = None
     if flags.save_output:
-        path = filename + "_output.tsv"
-        output_writer = TSV(path, mode='w')
+        output_writer = TSV(path + "output.tsv", mode='w')
         print("[SAVE] Writing output to %s" % path)
 
         if flags.test:
-            path = filename + "_labels.tsv"
-            label_writer = TSV(path, mode='w')
+            label_writer = TSV(path + "labels.tsv", mode='w')
             label_writer.writerow(['X', 'Y_hat', 'Y'])
             print("[SAVE] Writing labels to %s" % path)
 
@@ -248,7 +231,7 @@ if __name__ == "__main__":
                                          flags)
 
     if flags.save_checkpoint:
-        path = filename + "_state_%d.pkl" % epoch
+        path = path + "_state_%d.pkl" % epoch
         torch.save({'epoch': epoch,
                     'model_state_dict': model.state_dict(),
                     'optimizer_state_dict': optimizer.state_dict(),

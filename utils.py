@@ -45,7 +45,9 @@ def zero_pad(samples, time_dim):
             for t in samples]
 
 
-def mksplits(entity_to_class_map, splits):
+def mksplits(entity_to_class_map, splits="60/20/20"):
+    _, test_split, valid_split = [int(i) for i in splits.split('/')]
+
     classes, counts = np.unique(entity_to_class_map, return_counts=True)
     train, test, valid = list(), list(), list()
     for i, c in enumerate(classes):
