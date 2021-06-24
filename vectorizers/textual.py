@@ -4,7 +4,6 @@ from re import sub
 from string import punctuation
 
 import numpy as np
-from rdflib import Literal
 
 
 # textual
@@ -15,8 +14,7 @@ _VOCAB_MAP = {v: k for k, v in enumerate(_VOCAB)}
 _VOCAB_MAX_IDX = len(_VOCAB)
 
 
-def generate_data(g, indices, datatypes):
-    entity_to_class_map, entity_to_int_map, _ = indices
+def generate_data(g, datatypes):
     is_varlength = True
     time_dim = 1
 
@@ -28,42 +26,35 @@ def generate_data(g, indices, datatypes):
     int_to_datatype_map = dict(enumerate(datatypes))
     datatype_to_int_map = {v: k for k, v in int_to_datatype_map.items()}
     seen_datatypes = set()
-    for (s, p, o), _ in g.triples((None, None, None), None):
-        if type(o) is not Literal or (str(o.datatype) not in datatypes
-                                      and str(o.language) is not None):
-            continue
+    for datatype in datatypes:
+        datatype_int = datatype_to_int_map[datatype]
+        for g_idx in g.datatype_l2g(datatype):  # TODO: check if containts lang tags
+            value, _ = g.i2n[g_idx]
 
-        s = str(s)
-        s_int = entity_to_int_map[s]
+            sequence = None
+            seq_length = -1
+            try:
+                value = str(value)
 
-        if o.datatype is None:
-            # if has language tag
-            o_dtype = "http://www.w3.org/2001/XMLSchema#string"
-        else:
-            o_dtype = str(o.datatype)
-        o_dtype_int = datatype_to_int_map[o_dtype]
+                sequence = string_preprocess(value)
+                sequence = string_encode(sequence)[:_STR_MAX_CHARS]
+                seq_length = len(sequence)
+            except ValueError:
+                continue
 
-        sequence = None
-        seq_length = -1
-        try:
-            value = str(o)
+            if seq_length <= 0:
+                continue
 
-            sequence = string_preprocess(value)
-            sequence = string_encode(sequence)[:_STR_MAX_CHARS]
-            seq_length = len(sequence)
-        except ValueError:
-            continue
+            a = np.zeros(shape=(_VOCAB_MAX_IDX, seq_length), dtype=np.int8)
+            a[sequence, range(seq_length)] = 1
 
-        if seq_length <= 0:
-            continue
+            # global idx of entity to which this belongs
+            e_int = g.triples[np.where(g.triples[:, 2] == g_idx)][0][0]
 
-        a = np.zeros(shape=(_VOCAB_MAX_IDX, seq_length), dtype=np.int8)
-        a[sequence, range(seq_length)] = 1
-
-        data[o_dtype_int].append(a)
-        data_length[o_dtype_int].append(seq_length)
-        data_entity_map[o_dtype_int].append(s_int)
-        seen_datatypes.add(o_dtype_int)
+            data[datatype_int].append(a)
+            data_length[datatype_int].append(seq_length)
+            data_entity_map[datatype_int].append(e_int)
+            seen_datatypes.add(datatype_int)
 
     seen_datatypes = list(seen_datatypes)
     data = [data[i] for i in seen_datatypes]

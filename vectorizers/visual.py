@@ -5,15 +5,13 @@ from io import BytesIO
 from PIL import Image
 
 import numpy as np
-from rdflib.term import Literal
 
 
 _IMG_SIZE = (64, 64)
 _IMG_MODE = "RGB"
 
 
-def generate_data(g, indices, datatypes):
-    entity_to_class_map, entity_to_int_map, _ = indices
+def generate_data(g, datatypes):
     is_varlength = False
     time_dim = -1
 
@@ -25,34 +23,32 @@ def generate_data(g, indices, datatypes):
     int_to_datatype_map = dict(enumerate(datatypes))
     datatype_to_int_map = {v: k for k, v in int_to_datatype_map.items()}
     seen_datatypes = set()
-    for (s, p, o), _ in g.triples((None, None, None), None):
-        if type(o) is not Literal or str(o.datatype) not in datatypes:
-            continue
+    for datatype in datatypes:
+        datatype_int = datatype_to_int_map[datatype]
+        for g_idx in g.datatype_l2g(datatype):
+            value, _ = g.i2n[g_idx]
 
-        s = str(s)
-        s_int = entity_to_int_map[s]
+            blob = None
+            try:
+                blob = b64_to_img(value)
+                blob = downsample(blob)
+            except ValueError:
+                continue
 
-        value = str(o)
-        blob = None
-        try:
-            blob = b64_to_img(value)
-            blob = downsample(blob)
-        except ValueError:
-            continue
+            # add to matrix structures
+            a = np.array(blob, dtype=np.float32)
+            if _IMG_MODE == "RGB":
+                # from WxHxC to CxWxH
+                a = a.transpose((0, 2, 1)).transpose((1, 0, 2))
 
-        # add to matrix structures
-        a = np.array(blob, dtype=np.float32)
-        if _IMG_MODE == "RGB":
-            # from WxHxC to CxWxH
-            a = a.transpose((0, 2, 1)).transpose((1, 0, 2))
+            # global idx of entity to which this belongs
+            e_int = g.triples[np.where(g.triples[:, 2] == g_idx)][0][0]
 
-        o_dtype = str(o.datatype)
-        o_dtype_int = datatype_to_int_map[o_dtype]
-        seen_datatypes.add(o_dtype_int)
+            seen_datatypes.add(datatype_int)
 
-        data[o_dtype_int].append(a)
-        data_length[o_dtype_int].append(-1)
-        data_entity_map[o_dtype_int].append(s_int)
+            data[datatype_int].append(a)
+            data_length[datatype_int].append(-1)
+            data_entity_map[datatype_int].append(e_int)
 
     seen_datatypes = list(seen_datatypes)
     data = [data[i] for i in seen_datatypes]

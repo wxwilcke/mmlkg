@@ -2,15 +2,13 @@
 
 from deep_geometry import vectorizer as gv
 import numpy as np
-from rdflib.term import Literal
 
 
 _MAX_POINTS = 64
 VEC_LENGTH = 9
 
 
-def generate_data(g, indices, datatypes, time_dim=1):
-    entity_to_class_map, entity_to_int_map, _ = indices
+def generate_data(g, datatypes, time_dim=1):
     is_varlength = True
 
     datatypes = list(datatypes)
@@ -21,40 +19,38 @@ def generate_data(g, indices, datatypes, time_dim=1):
     int_to_datatype_map = dict(enumerate(datatypes))
     datatype_to_int_map = {v: k for k, v in int_to_datatype_map.items()}
     seen_datatypes = set()
-    for (s, p, o), _ in g.triples((None, None, None), None):
-        if type(o) is not Literal or str(o.datatype) not in datatypes:
-            continue
+    for datatype in datatypes:
+        datatype_int = datatype_to_int_map[datatype]
+        for g_idx in g.datatype_l2g(datatype):
+            value, _ = g.i2n[g_idx]
 
-        s = str(s)
-        s_int = entity_to_int_map[s]
+            vec = None
+            try:
+                value = str(value)
+                vec = gv.vectorize_wkt(value)[:_MAX_POINTS, :]
+            except ValueError:
+                continue
 
-        vec = None
-        try:
-            value = str(o)
-            vec = gv.vectorize_wkt(value)[:_MAX_POINTS, :]
-        except ValueError:
-            continue
+            vec_length = vec.shape[0]
+            if vec_length <= 0:
+                continue
 
-        vec_length = vec.shape[0]
-        if vec_length <= 0:
-            continue
+            # add means of X,Y to vector
+            mean_x = np.mean(vec[:, 0])
+            mean_y = np.mean(vec[:, 1])
+            vec = np.hstack([np.vstack([[mean_x, mean_y]]*vec_length), vec])
 
-        # add means of X,Y to vector
-        mean_x = np.mean(vec[:, 0])
-        mean_y = np.mean(vec[:, 1])
-        vec = np.hstack([np.vstack([[mean_x, mean_y]]*vec_length), vec])
+            if time_dim == 1:
+                # prep for CNN
+                vec = vec.T
 
-        if time_dim == 1:
-            # prep for CNN
-            vec = vec.T
+            # global idx of entity to which this belongs
+            e_int = g.triples[np.where(g.triples[:, 2] == g_idx)][0][0]
 
-        o_dtype = str(o.datatype)
-        o_dtype_int = datatype_to_int_map[o_dtype]
-        seen_datatypes.add(o_dtype_int)
-
-        data[o_dtype_int].append(vec)
-        data_length[o_dtype_int].append(len(vec))
-        data_entity_map[o_dtype_int].append(s_int)
+            seen_datatypes.add(datatype_int)
+            data[datatype_int].append(vec)
+            data_length[datatype_int].append(len(vec))
+            data_entity_map[datatype_int].append(e_int)
 
     seen_datatypes = list(seen_datatypes)
     data = [data[i] for i in seen_datatypes]

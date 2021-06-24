@@ -32,8 +32,7 @@ _MONTH_RAD = 2*pi/12
 _YEAR_DECADE_RAD = 2*pi/10
 
 
-def generate_data(g, indices, datatypes):
-    entity_to_class_map, entity_to_int_map, _ = indices
+def generate_data(g, datatypes):
     is_varlength = False
     time_dim = -1
 
@@ -45,68 +44,70 @@ def generate_data(g, indices, datatypes):
     int_to_datatype_map = dict(enumerate(datatypes))
     datatype_to_int_map = {v: k for k, v in int_to_datatype_map.items()}
     seen_datatypes = set()
-    for (s, p, o), _ in g.triples((None, None, None), None):
-        if type(o) is not Literal or str(o.datatype) not in datatypes:
-            continue
+    for datatype in datatypes:
+        datatype_int = datatype_to_int_map[datatype]
+        for g_idx in g.datatype_l2g(datatype):
+            value, _ = g.i2n[g_idx]
+            try:
+                value = str(value)
+            except ValueError:
+                continue
 
-        s = str(s)
-        s_int = entity_to_int_map[s]
+            try:
+                if datatype.endswith("gYear"):
+                    value = match("{}{}".format(_REGEX_YEAR_FRAG,
+                                                _REGEX_TIMEZONE_FRAG),
+                                  value)
+                elif datatype.endswith("dateTime"):
+                    value = match(_REGEX_DATETIME, value)
+                elif datatype.endswith("date"):
+                    value = match(_REGEX_DATE, value)
+            except Exception:
+                continue
 
-        o_dtype = str(o.datatype)
-        value = str(o)
-        try:
-            if o_dtype.endswith("gYear"):
-                value = match("{}{}".format(_REGEX_YEAR_FRAG,
-                                            _REGEX_TIMEZONE_FRAG),
-                              value)
-            elif o_dtype.endswith("dateTime"):
-                value = match(_REGEX_DATETIME, value)
-            elif o_dtype.endswith("date"):
-                value = match(_REGEX_DATE, value)
-        except Exception:
-            continue
+            row = list()
+            try:
+                sign = 1. if value.group('sign') == '' else -1.
+                year = value.group('year')
 
-        row = list()
-        try:
-            sign = 1. if value.group('sign') == '' else -1.
-            year = value.group('year')
+                # separate centuries, decades, and individual years
+                separated = temporal_separate(year)
 
-            # separate centuries, decades, and individual years
-            separated = temporal_separate(year)
+                c = int(separated.group('century'))
 
-            c = int(separated.group('century'))
+                decade = int(separated.group('decade'))
+                dec1, dec2 = temporal_point(decade, _YEAR_DECADE_RAD)
 
-            decade = int(separated.group('decade'))
-            dec1, dec2 = temporal_point(decade, _YEAR_DECADE_RAD)
+                year = int(separated.group('year'))
+                y1, y2 = temporal_point(year, _YEAR_DECADE_RAD)
 
-            year = int(separated.group('year'))
-            y1, y2 = temporal_point(year, _YEAR_DECADE_RAD)
+                row.extend([sign, c, dec1, dec2, y1, y2])
+                if datatype.endswith("date") or datatype.endswith("dateTime"):
+                    month = value.group('month')
+                    m1, m2 = temporal_point(int(month), _MONTH_RAD)
 
-            row.extend([sign, c, dec1, dec2, y1, y2])
-            if o_dtype.endswith("date") or o_dtype.endswith("dateTime"):
-                month = value.group('month')
-                m1, m2 = temporal_point(int(month), _MONTH_RAD)
+                    day = value.group('day')
+                    d1, d2 = temporal_point(int(day), _DAY_RAD)
 
-                day = value.group('day')
-                d1, d2 = temporal_point(int(day), _DAY_RAD)
+                    row.extend([m1, m2, d1, d2])
+                    if datatype.endswith("dateTime"):
+                        hour = value.group('hour')
+                        h1, h2 = temporal_point(int(hour), _HOUR_RAD)
 
-                row.extend([m1, m2, d1, d2])
-                if o_dtype.endswith("dateTime"):
-                    hour = value.group('hour')
-                    h1, h2 = temporal_point(int(hour), _HOUR_RAD)
+                        minutes = value.group('minute')
+                        min1, min2 = temporal_point(int(minutes), _MINUTE_RAD)
+                        row.extend([h1, h2, min1, min2])
+            except Exception:
+                continue
 
-                    minutes = value.group('minute')
-                    min1, min2 = temporal_point(int(minutes), _MINUTE_RAD)
-                    row.extend([h1, h2, min1, min2])
-        except Exception:
-            continue
+            # global idx of entity to which this belongs
+            e_int = g.triples[np.where(g.triples[:, 2] == g_idx)][0][0]
 
-        o_dtype_int = datatype_to_int_map[o_dtype]
-        seen_datatypes.add(o_dtype_int)
+            seen_datatypes.add(datatype_int)
 
-        data[o_dtype_int].append(row)
-        data_length[o_dtype_int].append(len(row))
-        data_entity_map[o_dtype_int].append(s_int)
+            data[datatype_int].append(row)
+            data_length[datatype_int].append(len(row))
+            data_entity_map[datatype_int].append(e_int)
 
     seen_datatypes = list(seen_datatypes)
     data = [data[i] for i in seen_datatypes]

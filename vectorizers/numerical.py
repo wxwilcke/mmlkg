@@ -1,11 +1,9 @@
 #!/usr/bin/python3
 
 import numpy as np
-from rdflib import Literal
 
 
-def generate_data(g, indices, datatypes):
-    entity_to_class_map, entity_to_int_map, _ = indices
+def generate_data(g, datatypes):
     is_varlength = False
     time_dim = -1
 
@@ -17,26 +15,23 @@ def generate_data(g, indices, datatypes):
     int_to_datatype_map = dict(enumerate(datatypes))
     datatype_to_int_map = {v: k for k, v in int_to_datatype_map.items()}
     seen_datatypes = set()
-    for (s, p, o), _ in g.triples((None, None, None), None):
-        if type(o) is not Literal or str(o.datatype) not in datatypes:
-            continue
+    for datatype in datatypes:
+        datatype_int = datatype_to_int_map[datatype]
+        for g_idx in g.datatype_l2g(datatype):
+            value, _ = g.i2n[g_idx]
+            try:
+                value = float(value)
+            except ValueError:
+                continue
 
-        s = str(s)
-        s_int = entity_to_int_map[s]
+            # global idx of entity to which this belongs
+            e_int = g.triples[np.where(g.triples[:, 2] == g_idx)][0][0]
 
-        o_dtype = str(o.datatype)
-        o_dtype_int = datatype_to_int_map[o_dtype]
+            data[datatype_int].append(value)
+            data_entity_map[datatype_int].append(e_int)
+            data_length[datatype_int].append(1)
 
-        try:
-            o = float(o)
-        except ValueError:
-            continue
-
-        data[o_dtype_int].append(o)
-        data_entity_map[o_dtype_int].append(s_int)
-        data_length[o_dtype_int].append(1)
-
-        seen_datatypes.add(o_dtype_int)
+            seen_datatypes.add(datatype_int)
 
     seen_datatypes = list(seen_datatypes)
     data = [data[i] for i in seen_datatypes]
