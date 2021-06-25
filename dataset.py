@@ -10,7 +10,8 @@ from xsd_hierarchy import XSDHierarchy
 from vectorizers import numerical, temporal, textual, spatial, visual
 
 
-SPECIAL = {'iri': '0', 'blank_node': '1', 'none': '2'}
+_SPECIAL = {'iri': '0', 'blank_node': '1', 'none': '2'}
+_XSD_NS = "http://www.w3.org/2001/XMLSchema#"
 
 
 class Data:
@@ -90,7 +91,9 @@ class Data:
         """
         if dtype not in self._dt_l2g:
             self._dt_l2g[dtype] = [i for i, (label, dt) in enumerate(self.i2n)
-                                   if dt == dtype]
+                                   if dt == dtype
+                                   or (dtype == _XSD_NS+"string"
+                                       and dt.startswith('@'))]
             self._dt_g2l[dtype] = {v: k
                                    for k, v in enumerate(self._dt_l2g[dtype])}
 
@@ -142,8 +145,8 @@ def datatype_key(string):
     :param string: :return:
     """
 
-    if string in SPECIAL:
-        return SPECIAL[string] + string
+    if string in _SPECIAL:
+        return _SPECIAL[string] + string
 
     return '9' + string
 
@@ -192,7 +195,7 @@ def load_entities(file):
     return i2n, n2i
 
 
-def generate_pickle(flags):
+def generate_pickled(flags):
     dataset = dict()
     xsd_tree = XSDHierarchy()
 
@@ -251,7 +254,6 @@ def generate_pickle(flags):
 def expand_prefix(datatypes):
     result = set()
     for datatype in datatypes:
-        result.add(datatype.replace("xsd.",
-                                    "http://www.w3.org/2001/XMLSchema#"))
+        result.add(datatype.replace("xsd.", _XSD_NS))
 
     return result

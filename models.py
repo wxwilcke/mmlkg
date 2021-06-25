@@ -10,11 +10,19 @@ import torch.nn.functional as f
 from utils import mkbatches, mkbatches_varlength, zero_pad
 
 
+_DIM_DEFAULT = {"numerical": 4,
+                "temporal": 16,
+                "textual": 128,
+                "spatial": 128,
+                "visual": 128}
+
+
 class FC(nn.Module):
     def __init__(self,
                  input_dim,
                  output_dim,
-                 p_dropout=0.0):
+                 p_dropout=0.0,
+                 bias=False):
         """
         Single-layer Linear Neural Network
 
@@ -22,7 +30,7 @@ class FC(nn.Module):
         super().__init__()
 
         self.p_dropout = p_dropout
-        self.fc = nn.Linear(input_dim, output_dim)
+        self.fc = nn.Linear(input_dim, output_dim, bias)
 
     def forward(self, X):
         X = self.fc(X)
@@ -38,7 +46,8 @@ class MLP(nn.Module):
     def __init__(self,
                  input_dim,
                  output_dim,
-                 p_dropout=0.0):
+                 p_dropout=0.0,
+                 bias=False):
         """
         Multi-Layer Perceptron
 
@@ -49,10 +58,10 @@ class MLP(nn.Module):
         hidden_dim = output_dim + int((input_dim-output_dim)/2)
 
         self.mlp = nn.Sequential(
-            nn.Linear(input_dim, hidden_dim),
+            nn.Linear(input_dim, hidden_dim, bias),
             nn.Dropout(p=self.p_dropout),
             nn.Sigmoid(),
-            nn.Linear(hidden_dim, output_dim),
+            nn.Linear(hidden_dim, output_dim, bias),
             nn.Dropout(p=self.p_dropout),
             nn.Sigmoid())
 
@@ -67,7 +76,7 @@ class MLP(nn.Module):
 class NeuralEncoders(nn.Module):
     def __init__(self,
                  dataset,
-                 num_samples,
+                 config,
                  flags):
         """
         Neural Encoder(s)
@@ -75,9 +84,9 @@ class NeuralEncoders(nn.Module):
         """
         super().__init__()
 
-        self.num_samples = num_samples
         self.batchsize = flags.batchsize
         self.encoders = nn.ModuleDict()
+        self.modalities = dict()  # map to encoders
         self.positions = dict()
         self.out_dim = 0
 
@@ -86,38 +95,59 @@ class NeuralEncoders(nn.Module):
             if len(dataset[modality]) <= 0:
                 continue
 
+            conf = dict()
+            if modality in config.keys():
+                conf = config[modality]
+
+            inter_dim = _DIM_DEFAULT[modality]\
+                if "output_dim" not in conf.keys()\
+                else conf["output_dim"]
+            dropout = 0.0 if "dropout" not in conf.keys()\
+                else conf["dropout"]
+            bias = False if "bias" not in conf.keys()\
+                else conf["bias"]
+
+            if modality not in self.modalities.keys():
+                self.modalities[modality] = list()
+
             data = dataset[modality]
             for mset in data:
                 datatype = mset[0].split('/')[-1]
 
                 if modality == "numerical":
-                    inter_dim = 4
-                    encoder = FC(input_dim=1, output_dim=inter_dim)
+                    encoder = FC(input_dim=1, output_dim=inter_dim,
+                                 p_dropout=dropout,
+                                 bias=bias)
                 elif modality == "textual":
-                    inter_dim = 128
                     time_dim = mset[-1]
                     f_in = mset[1][0].shape[1-time_dim]  # vocab size
                     encoder = CharCNN(features_in=f_in,
-                                      features_out=inter_dim)
+                                      features_out=inter_dim,
+                                      p_dropout=dropout,
+                                      bias=bias)
                 elif modality == "temporal":
-                    inter_dim = 16
                     f_in = mset[1][0].shape[0]
-                    encoder = FC(input_dim=f_in, output_dim=inter_dim)
+                    encoder = FC(input_dim=f_in, output_dim=inter_dim,
+                                 p_dropout=dropout,
+                                 bias=bias)
                 elif modality == "visual":
-                    inter_dim = 128
                     img_Ch, img_H, img_W = mset[1][0].shape
                     encoder = ImageCNN(channels_in=img_Ch,
                                        width=img_W,
                                        height=img_H,
-                                       features_out=inter_dim)
+                                       features_out=inter_dim,
+                                       p_dropout=dropout,
+                                       bias=bias)
                 elif modality == "spatial":
-                    inter_dim = 128
                     time_dim = mset[-1]
                     f_in = mset[1][0].shape[1-time_dim]  # vocab size
                     encoder = GeomCNN(features_in=f_in,
-                                      features_out=inter_dim)
+                                      features_out=inter_dim,
+                                      p_dropout=dropout,
+                                      bias=bias)
 
                 self.encoders[datatype] = encoder
+                self.modalities[modality].append(encoder)
                 self.out_dim += inter_dim
 
                 pos_new = pos + inter_dim
@@ -127,7 +157,8 @@ class NeuralEncoders(nn.Module):
     def forward(self, X):
         data, split_idc, device = X
 
-        Y = torch.zeros((self.num_samples,
+        num_samples = len(split_idc)
+        Y = torch.zeros((num_samples,
                          self.out_dim), dtype=torch.float32)
         for msets in data.values():
             for mset in msets:
@@ -140,20 +171,25 @@ class NeuralEncoders(nn.Module):
                 pos_begin, pos_end = self.positions[datatype]
 
                 # skip entities without this modality
-                split_idc = [i for i in split_idc if i in X_idc]
+                split_idc_local = [i for i in range(len(split_idc))
+                                   if split_idc[i] in X_idc]
+                split_idc_filtered = split_idc[split_idc_local]
+
                 # match entity indices to sample indices
-                X_split_idc = [np.where(X_idc == i)[0][0] for i in split_idc]
+                X_split_idc = [np.where(X_idc == i)[0][0]
+                               for i in split_idc_filtered]
 
                 X = [torch.Tensor(X[i]) for i in X_split_idc]
                 X_length = [X_length[i] for i in X_split_idc]
 
                 batches = list()
                 if is_varlength:
-                    batches = mkbatches_varlength(split_idc,
+                    batches = mkbatches_varlength(split_idc_local,
                                                   X_length,
                                                   self.batchsize)
                 else:
-                    batches = mkbatches(split_idc, self.batchsize)
+                    batches = mkbatches(split_idc_local,
+                                        self.batchsize)
 
                 num_batches = len(batches)
                 for i, (batch_idx, batch_sample_idx) in enumerate(batches, 1):
@@ -175,7 +211,8 @@ class NeuralEncoders(nn.Module):
 
 
 class CharCNN(nn.Module):
-    def __init__(self, features_in, features_out, p_dropout=0.0, size="M"):
+    def __init__(self, features_in, features_out, p_dropout=0.0, size="M",
+                 bias=False):
         """
         Character-level Convolutional Neural Network
 
@@ -207,7 +244,7 @@ class CharCNN(nn.Module):
 
             n_fc = max(32, features_out)
             self.fc = nn.Sequential(
-                nn.Linear(256, n_fc),
+                nn.Linear(256, n_fc, bias),
                 nn.ReLU(inplace=True),
                 nn.Dropout(p=p_dropout),
 
@@ -234,11 +271,11 @@ class CharCNN(nn.Module):
             n_first = max(256, features_out)
             n_second = max(64, features_out)
             self.fc = nn.Sequential(
-                nn.Linear(512, n_first),
+                nn.Linear(512, n_first, bias),
                 nn.ReLU(inplace=True),
                 nn.Dropout(p=p_dropout),
 
-                nn.Linear(n_first, n_second),
+                nn.Linear(n_first, n_second, bias),
                 nn.ReLU(inplace=True),
                 nn.Dropout(p=p_dropout),
 
@@ -265,11 +302,11 @@ class CharCNN(nn.Module):
             n_first = max(512, features_out)
             n_second = max(128, features_out)
             self.fc = nn.Sequential(
-                nn.Linear(1024, n_first),
+                nn.Linear(1024, n_first, bias),
                 nn.ReLU(inplace=True),
                 nn.Dropout(p=p_dropout),
 
-                nn.Linear(n_first, n_second),
+                nn.Linear(n_first, n_second, bias),
                 nn.ReLU(inplace=True),
                 nn.Dropout(p=p_dropout),
 
@@ -290,7 +327,7 @@ class CharCNN(nn.Module):
 
 class ImageCNN(nn.Module):
     def __init__(self, channels_in, height, width, features_out=1000,
-                 p_dropout=0.0):
+                 p_dropout=0.0, bias=False):
         """
         Image Convolutional Neural Network
 
@@ -361,7 +398,7 @@ class ImageCNN(nn.Module):
             conv_ds( 512,  512, 1),  # 4
             nn.AvgPool2d(4, stride=1)  # in 4, out 1
         )
-        self.fc = nn.Linear(512, features_out)
+        self.fc = nn.Linear(512, features_out, bias)
 
     def forward(self, X):
         X = self.conv(X)
@@ -375,7 +412,8 @@ class ImageCNN(nn.Module):
 
 
 class GeomCNN(nn.Module):
-    def __init__(self, features_in, features_out, p_dropout=0.0):
+    def __init__(self, features_in, features_out, p_dropout=0.0,
+                 bias=False):
         """
         Temporal Convolutional Neural Network to learn geometries
 
@@ -406,15 +444,15 @@ class GeomCNN(nn.Module):
         n_first = max(128, features_out)
         n_second = max(32, features_out)
         self.fc = nn.Sequential(
-            nn.Linear(512, n_first),
+            nn.Linear(512, n_first, bias),
             nn.ReLU(inplace=True),
             nn.Dropout(p=p_dropout),
 
-            nn.Linear(n_first, n_second),
+            nn.Linear(n_first, n_second, bias),
             nn.ReLU(inplace=True),
             nn.Dropout(p=p_dropout),
 
-            nn.Linear(n_second, features_out)
+            nn.Linear(n_second, features_out, bias)
         )
 
     def forward(self, X):

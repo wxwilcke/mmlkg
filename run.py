@@ -1,8 +1,10 @@
 #!/usr/bin.env python
 
 import argparse
+import json
 import pickle
 import sys
+from time import time
 
 import numpy as np
 import torch
@@ -25,8 +27,8 @@ def run_once(model, optimizer, loss_function, X,
     Y = torch.LongTensor(Y)
     Y_hat = model([X, samples_idc, device]).to("cpu")
 
-    loss = loss_function(Y_hat[samples_idc], Y)
-    acc = categorical_accuracy(Y_hat[samples_idc], Y)
+    loss = loss_function(Y_hat, Y)
+    acc = categorical_accuracy(Y_hat, Y)
 
     if train:
         optimizer.zero_grad()
@@ -53,6 +55,8 @@ def train_test_model(model, optimizer, loss, X, splits, epoch,
         training = np.concatenate([training, validation], axis=0)
 
     model.to(device)
+    # Log wall-clock time
+    t0 = time()
     for epoch in range(epoch, epoch+flags.num_epoch):
         print("[TRAIN] %3.d " % epoch, end='', flush=True)
 
@@ -83,6 +87,8 @@ def train_test_model(model, optimizer, loss, X, splits, epoch,
                                     train_loss, train_acc,
                                     valid_loss, valid_acc])
 
+    print("[TRAIN] {:.2f}s".format(time()-t0))
+
     predictions_array = None
     if flags.test:
         model.eval()
@@ -102,18 +108,17 @@ def train_test_model(model, optimizer, loss, X, splits, epoch,
             predictions = Y_hat.max(axis=1)[1]
             test_idc, Y = testing.T
             predictions_array = np.stack([test_idc,
-                                          predictions[test_idc],
+                                          predictions,
                                           Y], axis=1)
             predictions_array[predictions_array[:, 0].argsort()]  # sort by idc
 
     return (epoch, predictions_array)
 
 
-def main(dataset, output_writer, label_writer, device, flags):
+def main(dataset, output_writer, label_writer, device, config, flags):
     splits = (dataset['training'],
               dataset['testing'],
               dataset['validation'])
-    num_nodes = dataset['num_nodes']
     num_classes = dataset['num_classes']
 
     X = dict()
@@ -132,14 +137,33 @@ def main(dataset, output_writer, label_writer, device, flags):
         print("No data found - Exiting")
         sys.exit(1)
 
-    encoders = NeuralEncoders(X, num_nodes, flags)
+    encoders = NeuralEncoders(X, config['encoders'], flags)
     mlp = MLP(input_dim=encoders.out_dim,
               output_dim=num_classes)
     model = nn.Sequential(encoders, mlp)
 
-    optimizer = optim.Adam(model.parameters(),
-                           lr=flags.lr,
-                           weight_decay=flags.weight_decay)
+    if "optim" not in config.keys()\
+       or sum([len(c) for c in config["optim"].values()]) <= 0:
+        optimizer = optim.Adam(model.parameters(),
+                               lr=flags.lr,
+                               weight_decay=flags.weight_decay)
+    else:
+        params = [{"params": model[1].parameters()}]  # MLP
+        for modality in flags.modalities:
+            if modality not in config["optim"].keys():
+                continue
+
+            conf = config["optim"][modality]
+            # use hyperparameters specified in config.json
+            param = [{"params": enc.parameters()} | conf
+                     for enc in model[0].modalities[modality]]
+
+            params.extend(param)
+
+        optimizer = optim.Adam(params,
+                               lr=flags.lr,
+                               weight_decay=flags.weight_decay)
+
     loss = nn.CrossEntropyLoss()
 
     epoch = 1
@@ -169,6 +193,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--batchsize", help="Number of samples in batch",
                         default=32, type=int)
+    parser.add_argument("-c", "--config",
+                        help="JSON file with hyperparameters",
+                        default=None)
     parser.add_argument("--device", help="Device to run on (e.g., 'cuda:0')",
                         default="cpu", type=str)
     parser.add_argument("-i", "--input", help="Pickled dataset or directory"
@@ -207,7 +234,7 @@ if __name__ == "__main__":
         with open(path, 'rb') as bf:
             data = pickle.load(bf)
     else:
-        data = dataset.generate_pickle(flags)
+        data = dataset.generate_pickled(flags)
 
     output_writer = None
     label_writer = None
@@ -220,6 +247,11 @@ if __name__ == "__main__":
             label_writer.writerow(['X', 'Y_hat', 'Y'])
             print("[SAVE] Writing labels to %s" % path)
 
+    config = {"encoders": dict(), "optim": dict()}
+    if flags.config is not None:
+        with open(flags.config, 'r') as f:
+            config = json.load(f)
+
     device = torch.device(flags.device)
     if device.type.startswith("cuda") and not torch.cuda.is_available():
         device = torch.device("cpu")
@@ -228,7 +260,7 @@ if __name__ == "__main__":
 
     model, optimizer, loss, epoch = main(data, output_writer,
                                          label_writer, device,
-                                         flags)
+                                         config, flags)
 
     if flags.save_checkpoint:
         path = path + "_state_%d.pkl" % epoch

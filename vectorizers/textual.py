@@ -28,7 +28,7 @@ def generate_data(g, datatypes):
     seen_datatypes = set()
     for datatype in datatypes:
         datatype_int = datatype_to_int_map[datatype]
-        for g_idx in g.datatype_l2g(datatype):  # TODO: check if containts lang tags
+        for g_idx in g.datatype_l2g(datatype):
             value, _ = g.i2n[g_idx]
 
             sequence = None

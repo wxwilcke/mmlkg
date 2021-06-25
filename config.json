@@ -1,0 +1,36 @@
+{
+  "encoders": {
+      "numerical": {
+          "output_dim": 4,
+          "dropout": 0.0,
+          "bias": false
+      },
+      "temporal": {
+          "output_dim": 16,
+          "dropout": 0.0,
+          "bias": false
+      },
+      "textual": {
+          "output_dim": 128,
+          "dropout": 0.0,
+          "bias": false
+      },
+      "spatial": {
+          "output_dim": 128,
+          "dropout": 0.0,
+          "bias": false
+      },
+      "visual": {
+          "output_dim": 128,
+          "dropout": 0.0,
+          "bias": false
+      }
+  },
+  "optim": {
+      "numerical": {},
+      "temporal": {},
+      "textual": {},
+      "spatial": {},
+      "visual": {}
+  }
+}
