@@ -7,7 +7,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as f
 
-from utils import mkbatches, mkbatches_varlength, zero_pad
+from mmlp.utils import mkbatches, mkbatches_varlength, zero_pad
 
 
 _DIM_DEFAULT = {"numerical": 4,

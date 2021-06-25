@@ -11,10 +11,10 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 
-from data import dataset
-from data.tsv import TSV
-from models import MLP, NeuralEncoders
-from utils import categorical_accuracy
+from mmlp.data import dataset
+from mmlp.data.tsv import TSV
+from mmlp.models import MLP, NeuralEncoders
+from mmlp.utils import categorical_accuracy
 
 
 _MODALITIES = ["textual", "numerical", "temporal", "visual", "spatial"]

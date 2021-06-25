@@ -2,7 +2,6 @@
 
 import argparse
 import csv
-import sys
 
 import pandas as pd
 from rdflib.term import BNode, Literal, URIRef

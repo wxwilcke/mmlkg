@@ -6,8 +6,8 @@ import pickle
 import numpy as np
 import pandas as pd
 
-from data.xsd_hierarchy import XSDHierarchy
-from vectorizers import numerical, temporal, textual, spatial, visual
+from mmlp.data.xsd_hierarchy import XSDHierarchy
+from mmlp.vectorizers import numerical, temporal, textual, spatial, visual
 
 
 _SPECIAL = {'iri': '0', 'blank_node': '1', 'none': '2'}
