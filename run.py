@@ -11,9 +11,9 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 
-import dataset
+from data import dataset
+from data.tsv import TSV
 from models import MLP, NeuralEncoders
-from tsv import TSV
 from utils import categorical_accuracy
 
 
