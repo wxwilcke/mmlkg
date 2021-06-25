@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 
+import argparse
 import csv
 import sys
 
@@ -117,29 +118,37 @@ def generate_mapping(g, splits):
 
 
 if __name__ == "__main__":
-    args = sys.argv[1:]
-    if len(args) < 1 or len(args) > 5:
-        print("USAGE: ./generate_input.py <graph_stripped.hdt> "
-              + "[<train_set.csv> <test_set.csv> "
-              + "[<valid_set.csv>] [<meta_set.csv>]]")
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-i", "--input", help="HDT graph",
+                        required=True)
+    parser.add_argument("-d", "--dir", help="Output directory", default="./")
+    parser.add_argument("-ts", "--train", help="Training set (CSV) with "
+                        + "samples on the left-hand side and their classes "
+                        + "on the right",
+                        required=True)
+    parser.add_argument("-ws", "--test", help="Withheld set (CSV) for testing "
+                        + "with samples on the left-hand side and their "
+                        + "classes on the right",
+                        required=True)
+    parser.add_argument("-vs", "--valid", help="Validation set (CSV) with "
+                        + "samples on the left-hand side and their classes "
+                        + "on the right", default=None)
+    parser.add_argument("-ms", "--meta", help="Meta withheld set (CSV) with "
+                        + "samples on the left-hand side and their classes "
+                        + "on the right", default=None)
+    flags = parser.parse_args()
 
-    hdtfile = args[0]
+    hdtfile = flags.input
     g = HDTStore(hdtfile)
 
-    splits = args[1:]
-    train, test, valid, meta = None, None, None, None
-    if len(splits) >= 2:
-        train_path, test_path = splits[:2]
-        train = pd.read_csv(train_path)
-        test = pd.read_csv(test_path)
+    train = pd.read_csv(flags.train)
+    test = pd.read_csv(flags.test)
 
-        if len(splits) >= 3:
-            valid_path = splits[2]
-            valid = pd.read_csv(valid_path)
-
-        if len(splits) >= 4:
-            meta_path = splits[3]
-            meta = pd.read_csv(meta_path)
+    valid, meta = None, None
+    if flags.valid is not None:
+        valid = pd.read_csv(flags.valid)
+    if flags.meta is not None:
+        meta = pd.read_csv(flags.meta)
 
     data, splits, df_complete = generate_mapping(g, (train, test, valid, meta))
 
@@ -147,16 +156,18 @@ if __name__ == "__main__":
     df_train, df_test, df_valid, df_meta = splits
 
     # Write to CSV
-    df_nodes.to_csv('nodes.int.csv', index=False, header=True,
+    path = flags.dir if flags.dir.endswith('/') else flags.dir + '/'
+
+    df_nodes.to_csv(path+'nodes.int.csv', index=False, header=True,
                     quoting=csv.QUOTE_NONNUMERIC)
-    df_relations.to_csv('relations.int.csv', index=False, header=True,
+    df_relations.to_csv(path+'relations.int.csv', index=False, header=True,
                         quoting=csv.QUOTE_NONNUMERIC)
-    df_nodetypes.to_csv('nodetypes.int.csv', index=False, header=True)
+    df_nodetypes.to_csv(path+'nodetypes.int.csv', index=False, header=True)
     df_triples.to_csv('triples.int.csv', index=False, header=True)
 
-    df_train.to_csv('training.int.csv', index=False, header=True)
-    df_test.to_csv('testing.int.csv', index=False, header=True)
+    df_train.to_csv(path+'training.int.csv', index=False, header=True)
+    df_test.to_csv(path+'testing.int.csv', index=False, header=True)
     if df_valid is not None:
-        df_valid.to_csv('validation.int.csv', index=False, header=True)
+        df_valid.to_csv(path+'validation.int.csv', index=False, header=True)
     if df_meta is not None:
-        df_meta.to_csv('meta-testing.int.csv', index=False, header=True)
+        df_meta.to_csv(path+'meta-testing.int.csv', index=False, header=True)
