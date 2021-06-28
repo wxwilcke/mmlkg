@@ -162,7 +162,7 @@ if __name__ == "__main__":
     df_relations.to_csv(path+'relations.int.csv', index=False, header=True,
                         quoting=csv.QUOTE_NONNUMERIC)
     df_nodetypes.to_csv(path+'nodetypes.int.csv', index=False, header=True)
-    df_triples.to_csv('triples.int.csv', index=False, header=True)
+    df_triples.to_csv(path+'triples.int.csv', index=False, header=True)
 
     df_train.to_csv(path+'training.int.csv', index=False, header=True)
     df_test.to_csv(path+'testing.int.csv', index=False, header=True)

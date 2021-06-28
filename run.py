@@ -1,6 +1,7 @@
 #!/usr/bin.env python
 
 import argparse
+import bz2
 import json
 import pickle
 import sys
@@ -211,6 +212,8 @@ if __name__ == "__main__":
                         default=50, type=int)
     parser.add_argument("--lr", help="Initial learning rate",
                         default=0.01, type=float)
+    parser.add_argument("-o", "--output", help="Output directory",
+                        default=None)
     parser.add_argument("--save_dataset", help="Save dataset to disk",
                         action="store_true")
     parser.add_argument("--save_output", help="Save run to disk",
@@ -227,25 +230,34 @@ if __name__ == "__main__":
 
     flags = parser.parse_args()
 
-    path = flags.input
+    out_dir = flags.input if flags.output is None else flags.output
+    out_dir = out_dir + '/' if not out_dir.endswith('/') else out_dir
+
     data = None
-    if path.endswith('.pkl'):
+    if flags.input.endswith('.pbz2'):
         print("[READ] Found pickled data")
-        with open(path, 'rb') as bf:
+        with bz2.BZ2File(flags.input, 'rb') as bf:
             data = pickle.load(bf)
     else:
         data = dataset.generate_pickled(flags)
 
+        if flags.save_dataset:
+            print('Saving data to disk...')
+            with bz2.BZ2File(out_dir + 'dataset.pbz2', 'wb') as f:
+                pickle.dump(data, f)
+
     output_writer = None
     label_writer = None
     if flags.save_output:
-        output_writer = TSV(path + "output.tsv", mode='w')
-        print("[SAVE] Writing output to %s" % path)
+        f_out = out_dir + "output.tsv"
+        output_writer = TSV(f_out, mode='w')
+        print("[SAVE] Writing output to %s" % f_out)
 
         if flags.test:
-            label_writer = TSV(path + "labels.tsv", mode='w')
+            f_lbl = out_dir + "labels.tsv"
+            label_writer = TSV(f_lbl, mode='w')
             label_writer.writerow(['X', 'Y_hat', 'Y'])
-            print("[SAVE] Writing labels to %s" % path)
+            print("[SAVE] Writing labels to %s" % f_lbl)
 
     config = {"encoders": dict(), "optim": dict()}
     if flags.config is not None:
@@ -263,9 +275,9 @@ if __name__ == "__main__":
                                          config, flags)
 
     if flags.save_checkpoint:
-        path = path + "_state_%d.pkl" % epoch
+        f_state = out_dir + "_state_%d.pkl" % epoch
         torch.save({'epoch': epoch,
                     'model_state_dict': model.state_dict(),
                     'optimizer_state_dict': optimizer.state_dict(),
-                    'loss': loss}, path)
-        print("[SAVE] Writing model state to %s" % path)
+                    'loss': loss}, f_state)
+        print("[SAVE] Writing model state to %s" % f_state)

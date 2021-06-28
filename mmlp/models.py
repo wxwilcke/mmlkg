@@ -159,7 +159,7 @@ class NeuralEncoders(nn.Module):
 
         num_samples = len(split_idc)
         Y = torch.zeros((num_samples,
-                         self.out_dim), dtype=torch.float32)
+                         self.out_dim), dtype=torch.float32, device=device)
         for msets in data.values():
             for mset in msets:
                 datatype, X, X_length, X_idc, is_varlength, time_dim = mset
@@ -198,9 +198,10 @@ class NeuralEncoders(nn.Module):
 
                     X_batch = torch.stack(zero_pad(
                         [X[b] for b in batch_idx], time_dim), axis=0)
-                    X_batch.to(device)
+                    X_batch_dev = X_batch.to(device)
 
-                    Y[batch_sample_idx, pos_begin:pos_end] = encoder(X_batch)
+                    out_dev = encoder(X_batch_dev)
+                    Y[batch_sample_idx, pos_begin:pos_end] = out_dev
 
         return Y
 

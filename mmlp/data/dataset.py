@@ -1,7 +1,6 @@
 #!/usr/bin.env python
 
 from os.path import join
-import pickle
 
 import numpy as np
 import pandas as pd
@@ -242,11 +241,6 @@ def generate_pickled(flags):
             continue
 
         dataset[modality] = data
-
-    if flags.save_dataset:
-        print('Saving data to disk...')
-        with open(flags.input + 'dataset.pkl', 'wb') as f:
-            pickle.dump(dataset, f)
 
     return dataset
 

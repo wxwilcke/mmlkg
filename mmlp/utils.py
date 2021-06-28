@@ -70,4 +70,4 @@ def categorical_accuracy(Y_hat, Y_ground):
     predictions = Y_hat.max(axis=1)[1]
     num_correct = sum(predictions == Y_ground)
 
-    return num_correct / len(Y_ground)
+    return num_correct / float(len(Y_ground))
