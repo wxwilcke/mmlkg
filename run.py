@@ -26,7 +26,11 @@ def run_once(model, optimizer, loss_function, X,
     samples_idc, Y = samples.T
 
     Y = torch.LongTensor(Y)
-    Y_hat = model([X, samples_idc, device]).to("cpu")
+    if train:
+        Y_hat = model([X, samples_idc, device]).to("cpu")
+    else:
+        with torch.no_grad():
+            Y_hat = model([X, samples_idc, device]).to("cpu")
 
     loss = loss_function(Y_hat, Y)
     acc = categorical_accuracy(Y_hat, Y)
@@ -86,7 +90,8 @@ def train_test_model(model, optimizer, loss, X, splits, epoch,
         if flags.save_output:
             output_writer.writerow([epoch,
                                     train_loss, train_acc,
-                                    valid_loss, valid_acc])
+                                    valid_loss, valid_acc,
+                                    -1, -1])
 
     print("[TRAIN] {:.2f}s".format(time()-t0))
 
@@ -143,6 +148,10 @@ def main(dataset, output_writer, label_writer, device, config, flags):
               output_dim=num_classes)
     model = nn.Sequential(encoders, mlp)
 
+    # initialize weights
+    for module in model:
+        module.init()
+
     if "optim" not in config.keys()\
        or sum([len(c) for c in config["optim"].values()]) <= 0:
         optimizer = optim.Adam(model.parameters(),
@@ -191,6 +200,8 @@ def main(dataset, output_writer, label_writer, device, config, flags):
 
 
 if __name__ == "__main__":
+    t_init = "%d" % (time() * 1e7)
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--batchsize", help="Number of samples in batch",
                         default=32, type=int)
@@ -211,7 +222,7 @@ if __name__ == "__main__":
     parser.add_argument("--num_epoch", help="Number of training epoch",
                         default=50, type=int)
     parser.add_argument("--lr", help="Initial learning rate",
-                        default=0.01, type=float)
+                        default=0.001, type=float)
     parser.add_argument("-o", "--output", help="Output directory",
                         default=None)
     parser.add_argument("--save_dataset", help="Save dataset to disk",
@@ -249,18 +260,19 @@ if __name__ == "__main__":
     output_writer = None
     label_writer = None
     if flags.save_output:
-        f_out = out_dir + "output.tsv"
+        f_out = out_dir + "output_%s.tsv" % t_init
         output_writer = TSV(f_out, mode='w')
         print("[SAVE] Writing output to %s" % f_out)
 
         if flags.test:
-            f_lbl = out_dir + "labels.tsv"
+            f_lbl = out_dir + "labels_%s.tsv" % t_init
             label_writer = TSV(f_lbl, mode='w')
             label_writer.writerow(['X', 'Y_hat', 'Y'])
             print("[SAVE] Writing labels to %s" % f_lbl)
 
     config = {"encoders": dict(), "optim": dict()}
     if flags.config is not None:
+        print("[CONF] Using configuration from %s" % flags.config)
         with open(flags.config, 'r') as f:
             config = json.load(f)
 
@@ -275,7 +287,7 @@ if __name__ == "__main__":
                                          config, flags)
 
     if flags.save_checkpoint:
-        f_state = out_dir + "_state_%d.pkl" % epoch
+        f_state = out_dir + "_state_%s_%d.pkl" % (t_init, epoch)
         torch.save({'epoch': epoch,
                     'model_state_dict': model.state_dict(),
                     'optimizer_state_dict': optimizer.state_dict(),

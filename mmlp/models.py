@@ -5,7 +5,7 @@ from math import sqrt
 import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.functional as f
+import torch.nn.functional as F
 
 from mmlp.utils import mkbatches, mkbatches_varlength, zero_pad
 
@@ -35,7 +35,7 @@ class FC(nn.Module):
     def forward(self, X):
         X = self.fc(X)
 
-        return f.dropout(X, p=self.p_dropout)
+        return F.dropout(X, p=self.p_dropout)
 
     def init(self):
         for param in self.parameters():
@@ -206,7 +206,7 @@ class NeuralEncoders(nn.Module):
         return Y
 
     def init(self):
-        for encoder in self.encoders:
+        for encoder in self.encoders.values():
             for param in encoder.parameters():
                 nn.init.uniform_(param)
 
@@ -412,6 +412,39 @@ class ImageCNN(nn.Module):
             nn.init.normal_(param)
 
 
+class ResidualCNN(nn.Module):
+    def __init__(self, features, feature_maps, stride=1):
+        super().__init__()
+
+        self.conv = nn.Sequential(
+            nn.Conv1d(features, feature_maps, kernel_size=3,
+                      stride=stride, padding=1, bias=False),
+            nn.BatchNorm1d(feature_maps),
+            nn.ReLU(),
+            nn.Conv1d(feature_maps, feature_maps, kernel_size=3,
+                      padding=1, stride=stride, bias=False),
+            nn.BatchNorm1d(feature_maps)
+        )
+
+        self.downsample = None
+        if features != feature_maps:
+            self.downsample = nn.Sequential(
+                nn.Conv1d(features, feature_maps,
+                          kernel_size=1, stride=stride),
+                nn.BatchNorm1d(feature_maps))
+
+    def forward(self, X):
+        identity = X
+
+        out = self.conv(X)
+        if self.downsample is not None:
+            identity = self.downsample(identity)
+
+        out += identity
+
+        return F.relu(out)
+
+
 class GeomCNN(nn.Module):
     def __init__(self, features_in, features_out, p_dropout=0.0,
                  bias=False):
@@ -420,37 +453,28 @@ class GeomCNN(nn.Module):
 
         features_in  :: size of point encoding (nrows of input matrix)
         features_out :: size of final layer
-
-        Based on architecture described in:
-
-            van't Veer, Rein, Peter Bloem, and Erwin Folmer.
-            "Deep Learning for Classification Tasks on Geospatial
-            Vector Polygons." arXiv preprint arXiv:1806.03857 (2018).
         """
         super().__init__()
 
         self.conv = nn.Sequential(
-            nn.Conv1d(features_in, 16, kernel_size=5, padding=2),
-            nn.ReLU(inplace=True),
+            ResidualCNN(features_in, features_in),
+            ResidualCNN(features_in, 2*features_in),
             nn.MaxPool1d(kernel_size=3, stride=3),
-
-            nn.Conv1d(16, 32, kernel_size=5, padding=2),
-            nn.ReLU(inplace=True),
-
-            nn.Conv1d(32, 64, kernel_size=5, padding=2),
-            nn.ReLU(inplace=True),
-            nn.AdaptiveAvgPool1d(8)  # out = 8 x 64 = 512
+            ResidualCNN(2*features_in, 4*features_in),
+            ResidualCNN(4*features_in, 4*features_in),
+            nn.AdaptiveAvgPool1d(16)
         )
+        n_out = 16 * 4 * features_in
 
         n_first = max(128, features_out)
         n_second = max(32, features_out)
         self.fc = nn.Sequential(
-            nn.Linear(512, n_first, bias),
-            nn.ReLU(inplace=True),
+            nn.Linear(n_out, n_first, bias),
+            nn.ReLU(),
             nn.Dropout(p=p_dropout),
 
             nn.Linear(n_first, n_second, bias),
-            nn.ReLU(inplace=True),
+            nn.ReLU(),
             nn.Dropout(p=p_dropout),
 
             nn.Linear(n_second, features_out, bias)
@@ -466,6 +490,62 @@ class GeomCNN(nn.Module):
     def init(self):
         for param in self.parameters():
             nn.init.normal_(param)
+
+
+#class GeomCNN(nn.Module):
+#    def __init__(self, features_in, features_out, p_dropout=0.0,
+#                 bias=False):
+#        """
+#        Temporal Convolutional Neural Network to learn geometries
+#
+#        features_in  :: size of point encoding (nrows of input matrix)
+#        features_out :: size of final layer
+#
+#        Based on architecture described in:
+#
+#            van't Veer, Rein, Peter Bloem, and Erwin Folmer.
+#            "Deep Learning for Classification Tasks on Geospatial
+#            Vector Polygons." arXiv preprint arXiv:1806.03857 (2018).
+#        """
+#        super().__init__()
+#
+#        self.conv = nn.Sequential(
+#            nn.Conv1d(features_in, 16, kernel_size=5, padding=2),
+#            nn.ReLU(),
+#            nn.MaxPool1d(kernel_size=3, stride=3),
+#
+#            nn.Conv1d(16, 32, kernel_size=5, padding=2),
+#            nn.ReLU(),
+#
+#            nn.Conv1d(32, 64, kernel_size=5, padding=2),
+#            nn.ReLU(),
+#            nn.AdaptiveAvgPool1d(8)  # out = 8 x 64 = 512
+#        )
+#
+#        n_first = max(128, features_out)
+#        n_second = max(32, features_out)
+#        self.fc = nn.Sequential(
+#            nn.Linear(512, n_first, bias),
+#            nn.ReLU(),
+#            nn.Dropout(p=p_dropout),
+#
+#            nn.Linear(n_first, n_second, bias),
+#            nn.ReLU(),
+#            nn.Dropout(p=p_dropout),
+#
+#            nn.Linear(n_second, features_out, bias)
+#        )
+#
+#    def forward(self, X):
+#        X = self.conv(X)
+#        X = X.view(X.size(0), -1)
+#        X = self.fc(X)
+#
+#        return X
+#
+#    def init(self):
+#        for param in self.parameters():
+#            nn.init.normal_(param)
 
 
 class RNN(nn.Module):
