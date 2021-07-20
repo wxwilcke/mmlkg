@@ -8,31 +8,36 @@ The purpose of this package is to provide baselines for the [MR-GCN](https://git
 
 1) To install, clone the repository and run:
 
-``` pip install . 
+```
+pip install . 
 ```
 
 2) Once installed, we must first prepare a dataset by calling `generateInput`, which expects graphs in HDT format. Use [rdf2dt](https://github.com/rdfhdt/hdt-cpp) if your graphs are in another serialization format.
 
 For node classification, we need the context as HDT, and the splits as CSVs with the entity IRIs and corresponding classes in the first and second column, respectively:
 
-``` python generateInput.py -d ./myoutput/ -c context.hdt -ts train.csv -ws test.csv -vs valid.csv 
+``` 
+python generateInput.py -d ./myoutput/ -c context.hdt -ts train.csv -ws test.csv -vs valid.csv 
 ```
 
 For link prediction, we need the three splits as HDT files:
 
-``` python generateInput.py -d ./myoutput/ -ts train_lp.hdt -ws test_lp.hdt -vs valid_lp.hdt 
+``` 
+python generateInput.py -d ./myoutput/ -ts train_lp.hdt -ws test_lp.hdt -vs valid_lp.hdt 
 ```
 
 Running the above will generate our dataset as easy-to-use CSV files, as proposed by [KGbench](https://github.com/pbloem/kgbench/). See the example dataset in `data/test/`.
 
 3) Run a task on the prepared dataset by running:
 
-```python node_classification.py -i ./myoutput --num_epoch 50 --lr 0.001
+```
+python node_classification.py -i ./myoutput --num_epoch 50 --lr 0.001
 ```
 
 or
 
-```python link_prediction.py -i ./myoutput --num_epoch 50 --lr 0.001
+```
+python link_prediction.py -i ./myoutput --num_epoch 50 --lr 0.001
 ```
 
 If reading the graph from CSV files is slow, consider saving the internal data structure as compressed pickle file using `--save_dataset`, and replace the CSV folder `./myoutput/` with the pickled file in the line above.
