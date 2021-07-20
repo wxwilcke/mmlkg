@@ -7,7 +7,8 @@ from PIL import Image
 import numpy as np
 
 
-_IMG_SIZE = (64, 64)
+_IMG_SIZE = 256
+_IMG_CROP = 224
 _IMG_MODE = "RGB"
 
 
@@ -20,6 +21,11 @@ def generate_data(g, datatypes):
     data_length = [list() for dtype in datatypes]
     data_entity_map = [list() for dtype in datatypes]
 
+    # maps global subject index to global subject index
+    num_facts = g.triples.shape[0]
+    object_to_subject = np.empty(num_facts, dtype=int)
+    object_to_subject[g.triples[:, 2]] = g.triples[:, 0]
+
     int_to_datatype_map = dict(enumerate(datatypes))
     datatype_to_int_map = {v: k for k, v in int_to_datatype_map.items()}
     seen_datatypes = set()
@@ -28,21 +34,23 @@ def generate_data(g, datatypes):
         for g_idx in g.datatype_l2g(datatype):
             value, _ = g.i2n[g_idx]
 
-            blob = None
+            im = None
             try:
-                blob = b64_to_img(value)
-                blob = downsample(blob)
+                im = b64_to_img(value)
+                im = resize(im)
+                im = centerCrop(im)
             except ValueError:
                 continue
 
             # add to matrix structures
-            a = np.array(blob, dtype=np.float32)
+            a = np.array(im, dtype=np.float32)
+            a /= 255  # all values between 0 and 1
             if _IMG_MODE == "RGB":
-                # from WxHxC to CxWxH
-                a = a.transpose((0, 2, 1)).transpose((1, 0, 2))
+                # from WxHxC to CxHxW
+                a = a.transpose((2, 0, 1))
 
             # global idx of entity to which this belongs
-            e_int = g.triples[np.where(g.triples[:, 2] == g_idx)][0][0]
+            e_int = object_to_subject[g_idx]
 
             seen_datatypes.add(datatype_int)
 
@@ -85,8 +93,24 @@ def b64_to_img(b64string):
     return im
 
 
-def downsample(im):
-    if im.size != _IMG_SIZE:
-        return im.resize(_IMG_SIZE)
+def resize(im):
+    w, h = im.size
+    if w == _IMG_SIZE and h == _IMG_SIZE:
+        return im
+    elif w == h:
+        return im.resize((_IMG_SIZE, _IMG_SIZE))
+    elif w > h:
+        return im.resize(((_IMG_SIZE * w)//h, _IMG_SIZE))
+    else:  # h < w
+        return im.resize((_IMG_SIZE, (h * _IMG_SIZE)//w))
 
-    return im
+
+def centerCrop(im):
+    w, h = im.size
+
+    left = int(w/2 - _IMG_CROP/2)
+    top = int(h/2 - _IMG_CROP/2)
+    right = left + _IMG_CROP
+    bottom = top + _IMG_CROP
+
+    return im.crop((left, top, right, bottom))

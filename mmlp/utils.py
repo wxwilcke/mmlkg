@@ -1,6 +1,7 @@
 #!/usr/bin.env python
 
 import numpy as np
+import torch
 import torch.nn.functional as f
 
 
@@ -71,3 +72,57 @@ def categorical_accuracy(Y_hat, Y_ground):
     num_correct = sum(predictions == Y_ground)
 
     return num_correct / float(len(Y_ground))
+
+
+def binary_crossentropy(Y_hat, Y, criterion):
+    # Y_hat := output of score()
+    # Y := labels in [0, 1]
+    # Y_hat[i] == Y[i] -> i is same triple
+    return criterion(Y_hat, Y)
+
+
+def entity_to_entity_triples(data, entities):
+    """ return triples with entities on both sides
+    """
+    mask = np.isin(data[:, 0], entities) == np.isin(data[:, 2], entities)
+
+    return data[mask, :]
+
+
+def global_to_local(data, global_index):
+    # remap global indices to local indices of embeddings
+    # assume that embeddings are ordered by global_index
+    global_to_local_map = torch.empty(max(global_index) + 1, dtype=int)
+    global_to_local_map[global_index] = torch.arange(len(global_index))
+
+    data[:, 0] = global_to_local_map[data[:, 0]]
+    data[:, 2] = global_to_local_map[data[:, 2]]
+
+    return data
+
+
+def add_noise_(encoding_sets, p_noise, multiplier=0.01):
+    for mset in encoding_sets:
+        data = mset[1]
+        for i in range(len(data)):
+            if isinstance(data[i], np.ndarray):
+                size = data[i].size
+                shape = data[i].shape
+
+                b = np.random.binomial(1, p_noise, size=size)
+                noise = b.reshape(shape) * (2 * np.random.random(shape) - 1)
+                data[i] += multiplier * noise
+            elif isinstance(data[i], list):
+                size = len(data[i])
+
+                b = np.random.binomial(1, p_noise, size=size)
+                noise = b * (2 * np.random.random(size) - 1)
+                data[i] = list(data[i] + multiplier * noise)
+            elif isinstance(data[i], float):
+                if np.random.random() < p_noise:
+                    continue
+
+                noise = float(2 * np.random.random() - 1)
+                data[i] += multiplier * noise
+            else:
+                raise Exception(f" Cannot add noise to {type(data[i])}")

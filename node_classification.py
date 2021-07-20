@@ -15,7 +15,7 @@ import torch.optim as optim
 from mmlp.data import dataset
 from mmlp.data.tsv import TSV
 from mmlp.models import MLP, NeuralEncoders
-from mmlp.utils import categorical_accuracy
+from mmlp.utils import add_noise_, categorical_accuracy
 
 
 _MODALITIES = ["textual", "numerical", "temporal", "visual", "spatial"]
@@ -70,6 +70,24 @@ def train_test_model(model, optimizer, loss, X, splits, epoch,
                                             X, training, device,
                                             train=True)
 
+        if flags.L1lambda > 0:
+            l1_regularization = torch.tensor(0.)
+            for name, param in model.named_parameters():
+                if 'weight' not in name or not name.startswith('W_'):
+                    continue
+                l1_regularization += torch.sum(param.abs())
+
+            train_loss += flags.L1lambda * l1_regularization
+
+        if flags.L2lambda > 0:
+            l2_regularization = torch.tensor(0.)
+            for name, param in model.named_parameters():
+                if 'weight' not in name or not name.startswith('W_'):
+                    continue
+                l2_regularization += torch.sum(param ** 2)
+
+            train_loss += flags.L2lambda * l2_regularization
+
         valid_loss = -1
         valid_acc = -1
         if not flags.test:
@@ -99,12 +117,14 @@ def train_test_model(model, optimizer, loss, X, splits, epoch,
     if flags.test:
         model.eval()
 
+        t0 = time()
         Y_hat, test_loss, test_acc = run_once(model, None, loss,
                                               X, testing,
                                               device)
 
         print("[TEST] loss: {:.4f} / acc: {:.4f}".format(test_loss,
                                                          test_acc))
+        print("[TEST] {:.2f}s".format(time()-t0))
 
         if flags.save_output:
             output_writer.writerow([-1, -1, -1, -1, -1,
@@ -138,6 +158,16 @@ def main(dataset, output_writer, label_writer, device, config, flags):
             datatype = mset[0]
             print("[MODALITY] %s\t detected %s" % (modality,
                                                    datatype))
+
+        # add noise to input data
+        if "encoders" in config.keys()\
+           and modality in config["encoders"].keys():
+            modconf = config["encoders"][modality]
+            m_noise = 0.01 if "m_noise" not in modconf.keys()\
+                      else modconf["m_noise"]
+
+            if "p_noise" in modconf.keys():
+                add_noise_(X[modality], modconf["p_noise"], m_noise)
 
     if len(X) <= 0:
         print("No data found - Exiting")
@@ -180,12 +210,15 @@ def main(dataset, output_writer, label_writer, device, config, flags):
     if flags.load_checkpoint is not None:
         model.to("cpu")
 
-        print("[LOAD] Loading model state")
+        print("[LOAD] Loading model state", end='')
         checkpoint = torch.load(flags.load_checkpoint)
         model.load_state_dict(checkpoint['model_state_dict'])
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         epoch = checkpoint['epoch']
         loss = checkpoint['loss']
+
+        print(f" - {epoch} epoch")
+        epoch += 1
 
     epoch, predictions = train_test_model(model, optimizer, loss,
                                           X, splits, epoch,
@@ -223,6 +256,10 @@ if __name__ == "__main__":
                         default=50, type=int)
     parser.add_argument("--lr", help="Initial learning rate",
                         default=0.001, type=float)
+    parser.add_argument("--L1lambda", help="L1 normalization lambda",
+                        default=0.0, type=float)
+    parser.add_argument("--L2lambda", help="L2 normalization lambda",
+                        default=0.0, type=float)
     parser.add_argument("-o", "--output", help="Output directory",
                         default=None)
     parser.add_argument("--save_dataset", help="Save dataset to disk",
@@ -287,7 +324,7 @@ if __name__ == "__main__":
                                          config, flags)
 
     if flags.save_checkpoint:
-        f_state = out_dir + "_state_%s_%d.pkl" % (t_init, epoch)
+        f_state = out_dir + "model_state_%s_%d.pkl" % (t_init, epoch)
         torch.save({'epoch': epoch,
                     'model_state_dict': model.state_dict(),
                     'optimizer_state_dict': optimizer.state_dict(),

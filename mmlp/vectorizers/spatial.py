@@ -16,6 +16,11 @@ def generate_data(g, datatypes, time_dim=1):
     data_length = [list() for dtype in datatypes]
     data_entity_map = [list() for dtype in datatypes]
 
+    # maps global subject index to global subject index
+    num_facts = g.triples.shape[0]
+    object_to_subject = np.empty(num_facts, dtype=int)
+    object_to_subject[g.triples[:, 2]] = g.triples[:, 0]
+
     int_to_datatype_map = dict(enumerate(datatypes))
     datatype_to_int_map = {v: k for k, v in int_to_datatype_map.items()}
     seen_datatypes = set()
@@ -45,7 +50,7 @@ def generate_data(g, datatypes, time_dim=1):
                 vec = vec.T
 
             # global idx of entity to which this belongs
-            e_int = g.triples[np.where(g.triples[:, 2] == g_idx)][0][0]
+            e_int = object_to_subject[g_idx]
 
             seen_datatypes.add(datatype_int)
             data[datatype_int].append(vec)

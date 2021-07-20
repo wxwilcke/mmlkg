@@ -9,16 +9,17 @@ def readme():
 
 setup(
     name='mmlp',
-    version='0.1',
+    version='0.2',
     author='Xander Wilcke',
     author_email='w.x.wilcke@vu.nl',
     url='https://gitlab.com/wxwilcke/mmlp',
-    description='Multimodal Multi-Layer Perceptron (M-MLP) for RDF Knowledge Graphs',
+    description='End-to-End Multimodal Machine Learning for RDF Knowledge Graphs',
     license='GLP3',
     include_package_data=True,
     zip_safe=True,
     install_requires=[
         'torch',
+        'torchvision',
         'numpy',
         'rdflib',
         'rdflib-hdt',

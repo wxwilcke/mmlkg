@@ -6,6 +6,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torchvision import models
 
 from mmlp.utils import mkbatches, mkbatches_varlength, zero_pad
 
@@ -15,62 +16,6 @@ _DIM_DEFAULT = {"numerical": 4,
                 "textual": 128,
                 "spatial": 128,
                 "visual": 128}
-
-
-class FC(nn.Module):
-    def __init__(self,
-                 input_dim,
-                 output_dim,
-                 p_dropout=0.0,
-                 bias=False):
-        """
-        Single-layer Linear Neural Network
-
-        """
-        super().__init__()
-
-        self.p_dropout = p_dropout
-        self.fc = nn.Linear(input_dim, output_dim, bias)
-
-    def forward(self, X):
-        X = self.fc(X)
-
-        return F.dropout(X, p=self.p_dropout)
-
-    def init(self):
-        for param in self.parameters():
-            nn.init.uniform_(param)
-
-
-class MLP(nn.Module):
-    def __init__(self,
-                 input_dim,
-                 output_dim,
-                 p_dropout=0.0,
-                 bias=False):
-        """
-        Multi-Layer Perceptron
-
-        """
-        super().__init__()
-
-        self.p_dropout = p_dropout
-        hidden_dim = output_dim + int((input_dim-output_dim)/2)
-
-        self.mlp = nn.Sequential(
-            nn.Linear(input_dim, hidden_dim, bias),
-            nn.Dropout(p=self.p_dropout),
-            nn.Sigmoid(),
-            nn.Linear(hidden_dim, output_dim, bias),
-            nn.Dropout(p=self.p_dropout),
-            nn.Sigmoid())
-
-    def forward(self, X):
-        return self.mlp(X)
-
-    def init(self):
-        for param in self.parameters():
-            nn.init.uniform_(param)
 
 
 class NeuralEncoders(nn.Module):
@@ -132,10 +77,7 @@ class NeuralEncoders(nn.Module):
                                  bias=bias)
                 elif modality == "visual":
                     img_Ch, img_H, img_W = mset[1][0].shape
-                    encoder = ImageCNN(channels_in=img_Ch,
-                                       width=img_W,
-                                       height=img_H,
-                                       features_out=inter_dim,
+                    encoder = ImageCNN(features_out=inter_dim,
                                        p_dropout=dropout,
                                        bias=bias)
                 elif modality == "spatial":
@@ -211,9 +153,64 @@ class NeuralEncoders(nn.Module):
                 nn.init.uniform_(param)
 
 
-class CharCNN(nn.Module):
-    def __init__(self, features_in, features_out, p_dropout=0.0, size="M",
+class FC(nn.Module):
+    def __init__(self,
+                 input_dim,
+                 output_dim,
+                 p_dropout=0.0,
                  bias=False):
+        """
+        Single-layer Linear Neural Network
+
+        """
+        super().__init__()
+
+        self.p_dropout = p_dropout
+        self.fc = nn.Linear(input_dim, output_dim, bias)
+
+    def forward(self, X):
+        X = self.fc(X)
+
+        return F.dropout(X, p=self.p_dropout)
+
+    def init(self):
+        for param in self.parameters():
+            nn.init.uniform_(param)
+
+
+class MLP(nn.Module):
+    def __init__(self,
+                 input_dim,
+                 output_dim,
+                 p_dropout=0.0,
+                 bias=False):
+        """
+        Multi-Layer Perceptron
+
+        """
+        super().__init__()
+
+        self.p_dropout = p_dropout
+        hidden_dim = output_dim + int((input_dim-output_dim)/2)
+
+        self.mlp = nn.Sequential(
+            nn.Linear(input_dim, hidden_dim, bias),
+            nn.Dropout(p=self.p_dropout),
+            nn.Sigmoid(),
+            nn.Linear(hidden_dim, output_dim, bias),
+            nn.Dropout(p=self.p_dropout),
+            nn.Sigmoid())
+
+    def forward(self, X):
+        return self.mlp(X)
+
+    def init(self):
+        for param in self.parameters():
+            nn.init.uniform_(param)
+
+
+class CharCNN(nn.Module):
+    def __init__(self, features_in, features_out, p_dropout=0.0, size="M"):
         """
         Character-level Convolutional Neural Network
 
@@ -221,94 +218,130 @@ class CharCNN(nn.Module):
         features_out :: size of final layer
         size         :: 'S' small, 'M' medium, or 'L' large network
 
-        Based on architecture described in:
-
-            Xiang Zhang, Junbo Zhao, Yann LeCun. Character-level Convolutional
-            Networks for Text Classification. Advances in Neural Information
-            Processing Systems 28 (NIPS 2015)
         """
         super().__init__()
 
         if size == "S":
-            # sequence length >= 3
+            self.minimal_length = 5
+            # sequence length >= 5
             self.conv = nn.Sequential(
-                nn.Conv1d(features_in, 64, kernel_size=7, padding=3),
-                nn.ReLU(inplace=True),
-                nn.MaxPool1d(kernel_size=3, stride=3),  # len/3
+                nn.Conv1d(features_in, 64, kernel_size=3, padding=1),
+                nn.BatchNorm1d(64),
+                nn.ReLU(),
+                nn.Conv1d(64, 64, kernel_size=3, padding=1),
+                nn.BatchNorm1d(64),
+                nn.ReLU(),
+                nn.Conv1d(64, 64, kernel_size=3, padding=1),
+                nn.BatchNorm1d(64),
+                nn.ReLU(),
+                nn.AdaptiveMaxPool1d(1),
 
-                nn.Conv1d(64, 64, kernel_size=7, padding=3),
-                nn.ReLU(inplace=True),
-                nn.Conv1d(64, 64, kernel_size=7, padding=3),
-                nn.ReLU(inplace=True),
-                nn.AdaptiveMaxPool1d(4)
+                nn.Conv1d(64, 128, kernel_size=3, padding=1),
+                nn.BatchNorm1d(128),
+                nn.ReLU(),
+                nn.Conv1d(128, 128, kernel_size=3, padding=1),  # len == 1
+                nn.ReLU()
             )
 
-            n_fc = max(32, features_out)
+            n_fc = max(128, features_out)
             self.fc = nn.Sequential(
-                nn.Linear(256, n_fc, bias),
-                nn.ReLU(inplace=True),
+                nn.Linear(128, n_fc),
+                nn.ReLU(),
                 nn.Dropout(p=p_dropout),
 
                 nn.Linear(n_fc, features_out)
             )
         elif size == "M":
-            # sequence length >= 12
+            self.minimal_length = 20
+            # sequence length >= 20
             self.conv = nn.Sequential(
                 nn.Conv1d(features_in, 64, kernel_size=7, padding=3),
-                nn.ReLU(inplace=True),
-                nn.MaxPool1d(kernel_size=2, stride=2),  # len/2
+                nn.BatchNorm1d(64),
+                nn.ReLU(),
+                nn.MaxPool1d(kernel_size=2, stride=2),
 
                 nn.Conv1d(64, 64, kernel_size=7, padding=3),
-                nn.ReLU(inplace=True),
-                nn.MaxPool1d(kernel_size=2, stride=2),  # len/4
+                nn.BatchNorm1d(64),
+                nn.ReLU(),
+                nn.MaxPool1d(kernel_size=2, stride=2),
 
-                nn.Conv1d(64, 64, kernel_size=7, padding=3),
-                nn.ReLU(inplace=True),
-                nn.Conv1d(64, 64, kernel_size=7, padding=2),  # (len/4) - 2
-                nn.ReLU(inplace=True),
-                nn.AdaptiveMaxPool1d(8)
+                nn.Conv1d(64, 128, kernel_size=3, padding=1),
+                nn.BatchNorm1d(128),
+                nn.ReLU(),
+                nn.Conv1d(128, 128, kernel_size=3, padding=1),
+                nn.BatchNorm1d(128),
+                nn.ReLU(),
+                nn.Conv1d(128, 256, kernel_size=3, padding=1),
+                nn.BatchNorm1d(256),
+                nn.ReLU(),
+                nn.AdaptiveMaxPool1d(1),
+
+                nn.Conv1d(256, 256, kernel_size=3, padding=1),
+                nn.BatchNorm1d(256),
+                nn.ReLU(),
+                nn.Conv1d(256, 512, kernel_size=3, padding=1),  # len == 1
+                nn.ReLU()
             )
 
             n_first = max(256, features_out)
-            n_second = max(64, features_out)
+            n_second = max(128, features_out)
             self.fc = nn.Sequential(
-                nn.Linear(512, n_first, bias),
-                nn.ReLU(inplace=True),
+                nn.Linear(512, n_first),
+                nn.ReLU(),
                 nn.Dropout(p=p_dropout),
 
-                nn.Linear(n_first, n_second, bias),
-                nn.ReLU(inplace=True),
+                nn.Linear(n_first, n_second),
+                nn.ReLU(),
                 nn.Dropout(p=p_dropout),
 
                 nn.Linear(n_second, features_out)
             )
         elif size == "L":
-            # sequence length >= 30
+            self.minimal_length = 100
+            # sequence length >= 100
             self.conv = nn.Sequential(
                 nn.Conv1d(features_in, 64, kernel_size=7, padding=3),
-                nn.ReLU(inplace=True),
-                nn.MaxPool1d(kernel_size=3, stride=3),  # len/3
+                nn.BatchNorm1d(64),
+                nn.ReLU(),
+                nn.MaxPool1d(kernel_size=3, stride=3),
 
-                nn.Conv1d(64, 128, kernel_size=8),  # len/3 - 7
-                nn.ReLU(inplace=True),
-                nn.MaxPool1d(kernel_size=3, stride=3),  # (len/3 - 7)/3
+                nn.Conv1d(64, 64, kernel_size=7, padding=3),
+                nn.BatchNorm1d(64),
+                nn.ReLU(),
+                nn.MaxPool1d(kernel_size=3, stride=3),
 
+                nn.Conv1d(64, 128, kernel_size=3, padding=1),
+                nn.BatchNorm1d(128),
+                nn.ReLU(),
                 nn.Conv1d(128, 128, kernel_size=3, padding=1),
-                nn.ReLU(inplace=True),
+                nn.BatchNorm1d(128),
+                nn.ReLU(),
                 nn.Conv1d(128, 128, kernel_size=3, padding=1),
-                nn.ReLU(inplace=True),
-                nn.AdaptiveMaxPool1d(8)
+                nn.BatchNorm1d(128),
+                nn.ReLU(),
+                nn.AdaptiveMaxPool1d(5),
+
+                nn.Conv1d(128, 256, kernel_size=3, padding=1),
+                nn.BatchNorm1d(256),
+                nn.ReLU(),
+                nn.Conv1d(256, 256, kernel_size=3, padding=1),
+                nn.BatchNorm1d(256),
+                nn.ReLU(),
+                nn.Conv1d(256, 512, kernel_size=3),
+                nn.ReLU(),
+                nn.Conv1d(512, 1024, kernel_size=3),  # len == 1
+                nn.ReLU()
             )
 
             n_first = max(512, features_out)
             n_second = max(128, features_out)
             self.fc = nn.Sequential(
-                nn.Linear(1024, n_first, bias),
-                nn.ReLU(inplace=True),
+                nn.Linear(1024, n_first),
+                nn.ReLU(),
                 nn.Dropout(p=p_dropout),
 
-                nn.Linear(n_first, n_second, bias),
-                nn.ReLU(inplace=True),
+                nn.Linear(n_first, n_second),
+                nn.ReLU(),
                 nn.Dropout(p=p_dropout),
 
                 nn.Linear(n_second, features_out)
@@ -327,85 +360,29 @@ class CharCNN(nn.Module):
 
 
 class ImageCNN(nn.Module):
-    def __init__(self, channels_in, height, width, features_out=1000,
-                 p_dropout=0.0, bias=False):
-        """
-        Image Convolutional Neural Network
-
-        Implementation based on work from:
-
-            Howard, Andrew G., et al. "Mobilenets: Efficient convolutional
-            neural networks for mobile vision applications." arXiv preprint
-            arXiv:1704.04861 (2017).
-
-        Adapted to fit smaller image resolution
-
-        """
+    def __init__(self, features_out=1000, p_dropout=0.,
+                 pretrained=False, bias=True):
         super().__init__()
 
-        def conv_std(channels_in, channels_out, stride):
-            # standard convolutional layer
-            return nn.Sequential(
-                                nn.Conv2d(channels_in, channels_out,
-                                          kernel_size=(3, 3),
-                                          stride=stride,
-                                          padding=1),
-                                nn.BatchNorm2d(channels_out),
-                                nn.ReLU(inplace=True)
-            )
+        self.model = models.mobilenet_v3_small(pretrained=pretrained)
 
-        def conv_ds(channels_in, channels_out, stride):
-            # depthwise separable convolutions
-            return nn.Sequential(
-                                conv_dw(channels_in, channels_in, stride),
-                                conv_pw(channels_in, channels_out, stride)
-            )
+        # change dropout
+        dropout = self.model._modules['classifier'][-2]
+        if dropout.p != p_dropout:
+            self.model._modules['classifier'][-2] = nn.Dropout(p=p_dropout)
 
-        def conv_dw(channels_in, channels_out, stride):
-            # depthwise convolutional layer
-            return nn.Sequential(
-                                nn.Conv2d(channels_in, channels_out,
-                                          kernel_size=(3, 3),
-                                          stride=stride,
-                                          padding=1,
-                                          groups=channels_in),
-                                nn.BatchNorm2d(channels_out),
-                                nn.ReLU(inplace=True),
-            )
+        # change output features
+        classifier = self.model._modules['classifier'][-1]
+        if features_out != classifier.out_features:
+            features_in = classifier.in_features
+            fc = nn.Linear(in_features=features_in,
+                           out_features=features_out,
+                           bias=bias)
 
-        def conv_pw(channels_in, channels_out, stride):
-            # pointwise convolutional layer
-            return nn.Sequential(
-                                nn.Conv2d(channels_in, channels_out,
-                                          kernel_size=(1, 1),
-                                          stride=1,
-                                          padding=0),
-                                nn.BatchNorm2d(channels_out),
-                                nn.ReLU(inplace=True)
-            )
-
-        self.conv = nn.Sequential(
-            conv_std(  3,   32, 2),  # in H,W = 64, out 32
-            conv_ds(  32,   64, 1),  # 32
-            conv_ds(  64,  128, 2),  # in 32, out 16
-            conv_ds( 128,  128, 1),  # 16
-            conv_ds( 128,  256, 2),  # in 16, out 8
-            conv_ds( 256,  256, 1),  # 8
-            conv_ds( 256,  256, 1),  # 8
-            conv_ds( 256,  256, 1),  # 8
-            conv_ds( 256,  256, 1),  # 8
-            conv_ds( 256,  256, 1),  # 8
-            conv_ds( 256,  512, 2),  # in 8, out 4
-            conv_ds( 512,  512, 1),  # 4
-            nn.AvgPool2d(4, stride=1)  # in 4, out 1
-        )
-        self.fc = nn.Linear(512, features_out, bias)
+            self.model._modules['classifier'][-1] = fc
 
     def forward(self, X):
-        X = self.conv(X)
-        X = X.view(-1, 512)
-
-        return self.fc(X)
+        return self.model(X)
 
     def init(self):
         for param in self.parameters():
@@ -446,38 +423,57 @@ class ResidualCNN(nn.Module):
 
 
 class GeomCNN(nn.Module):
-    def __init__(self, features_in, features_out, p_dropout=0.0,
-                 bias=False):
+    def __init__(self, features_in, features_out, p_dropout=0.0):
         """
         Temporal Convolutional Neural Network to learn geometries
 
-        features_in  :: size of point encoding (nrows of input matrix)
+        features_in  :: size of point encoding (default 9)
         features_out :: size of final layer
+
+        Minimal sequence length = 12
         """
         super().__init__()
 
+        self.minimal_length = 12
         self.conv = nn.Sequential(
-            ResidualCNN(features_in, features_in),
-            ResidualCNN(features_in, 2*features_in),
-            nn.MaxPool1d(kernel_size=3, stride=3),
-            ResidualCNN(2*features_in, 4*features_in),
-            ResidualCNN(4*features_in, 4*features_in),
-            nn.AdaptiveAvgPool1d(16)
+            nn.Conv1d(features_in, 32, kernel_size=3, padding=1),
+            nn.BatchNorm1d(32),
+            nn.ReLU(),
+            nn.Conv1d(32, 64, kernel_size=3, padding=1),
+            nn.BatchNorm1d(64),
+            nn.ReLU(),
+            nn.AvgPool1d(kernel_size=2, stride=2),
+
+            nn.Conv1d(64, 128, kernel_size=3, padding=1),
+            nn.BatchNorm1d(128),
+            nn.ReLU(),
+            nn.Conv1d(128, 128, kernel_size=3, padding=1),
+            nn.BatchNorm1d(128),
+            nn.ReLU(),
+            nn.Conv1d(128, 256, kernel_size=3, padding=1),
+            nn.BatchNorm1d(256),
+            nn.ReLU(),
+            nn.AdaptiveAvgPool1d(3),
+
+            nn.Conv1d(256, 512, kernel_size=3),
+            nn.BatchNorm1d(512),
+            nn.ReLU(),
+            nn.Conv1d(512, 512, kernel_size=3, padding=1),
+            nn.ReLU(),
         )
-        n_out = 16 * 4 * features_in
 
-        n_first = max(128, features_out)
-        n_second = max(32, features_out)
+        n_first = max(256, features_out)
+        n_second = max(128, features_out)
         self.fc = nn.Sequential(
-            nn.Linear(n_out, n_first, bias),
+            nn.Linear(512, n_first),
             nn.ReLU(),
             nn.Dropout(p=p_dropout),
 
-            nn.Linear(n_first, n_second, bias),
+            nn.Linear(n_first, n_second),
             nn.ReLU(),
             nn.Dropout(p=p_dropout),
 
-            nn.Linear(n_second, features_out, bias)
+            nn.Linear(n_second, features_out)
         )
 
     def forward(self, X):
@@ -490,62 +486,6 @@ class GeomCNN(nn.Module):
     def init(self):
         for param in self.parameters():
             nn.init.normal_(param)
-
-
-#class GeomCNN(nn.Module):
-#    def __init__(self, features_in, features_out, p_dropout=0.0,
-#                 bias=False):
-#        """
-#        Temporal Convolutional Neural Network to learn geometries
-#
-#        features_in  :: size of point encoding (nrows of input matrix)
-#        features_out :: size of final layer
-#
-#        Based on architecture described in:
-#
-#            van't Veer, Rein, Peter Bloem, and Erwin Folmer.
-#            "Deep Learning for Classification Tasks on Geospatial
-#            Vector Polygons." arXiv preprint arXiv:1806.03857 (2018).
-#        """
-#        super().__init__()
-#
-#        self.conv = nn.Sequential(
-#            nn.Conv1d(features_in, 16, kernel_size=5, padding=2),
-#            nn.ReLU(),
-#            nn.MaxPool1d(kernel_size=3, stride=3),
-#
-#            nn.Conv1d(16, 32, kernel_size=5, padding=2),
-#            nn.ReLU(),
-#
-#            nn.Conv1d(32, 64, kernel_size=5, padding=2),
-#            nn.ReLU(),
-#            nn.AdaptiveAvgPool1d(8)  # out = 8 x 64 = 512
-#        )
-#
-#        n_first = max(128, features_out)
-#        n_second = max(32, features_out)
-#        self.fc = nn.Sequential(
-#            nn.Linear(512, n_first, bias),
-#            nn.ReLU(),
-#            nn.Dropout(p=p_dropout),
-#
-#            nn.Linear(n_first, n_second, bias),
-#            nn.ReLU(),
-#            nn.Dropout(p=p_dropout),
-#
-#            nn.Linear(n_second, features_out, bias)
-#        )
-#
-#    def forward(self, X):
-#        X = self.conv(X)
-#        X = X.view(X.size(0), -1)
-#        X = self.fc(X)
-#
-#        return X
-#
-#    def init(self):
-#        for param in self.parameters():
-#            nn.init.normal_(param)
 
 
 class RNN(nn.Module):
@@ -581,3 +521,133 @@ class RNN(nn.Module):
         sqrt_k = sqrt(1.0/self.hidden_dim)
         for param in self.parameters():
             nn.init.uniform_(param, -sqrt_k, sqrt_k)
+
+
+class DistMult(nn.Module):
+    def __init__(self,
+                 num_entities,  # entities only (no literals)
+                 num_relations,  # datatype properties only
+                 embedding_dim=-1,
+                 literalE=False,
+                 **kwargs):
+        """
+        """
+        super().__init__()
+
+        if embedding_dim < 0:
+            embedding_dim = num_entities
+
+        # matrix of entity (!= node) embeddings
+        self.node_embeddings = nn.Parameter(torch.empty((num_entities,
+                                                         embedding_dim)))
+        # simulate diag(R) by vectors (r x h)
+        self.edge_embeddings = nn.Parameter(torch.empty((num_relations,
+                                                         embedding_dim)))
+
+        self.fuse_model = None
+        if literalE:
+            self.fuse_model = LiteralE(num_entities=num_entities,
+                                       embedding_dim=embedding_dim,
+                                       **kwargs)
+
+    def forward(self, X):
+        # data := entity to entity triples only;
+        #         indices must map to local embedding tensors
+        # feature_embeddings := literal embeddings belonging to entities
+        (e_idc, p_idc, u_idc), feature_embeddings = X
+
+        p = self.edge_embeddings[p_idc, :]
+        if self.fuse_model is not None:
+            # fuse node and feature embeddings
+            index = np.union1d(e_idc, u_idc)
+            embeddings = torch.empty(self.node_embeddings.shape)
+            embeddings[index] = self.fuse_model([self.node_embeddings,
+                                                 feature_embeddings,
+                                                 index])
+
+            e = embeddings[e_idc, :]
+            u = embeddings[u_idc, :]
+        else:
+            e = self.node_embeddings[e_idc, :]
+            u = self.node_embeddings[u_idc, :]
+
+        # optimizations for common broadcasting
+        if len(e.size()) == len(p.size()) == len(u.size()):
+            if p_idc.size(-1) == 1 and u_idc.size(-1) == 1:
+                singles = p * u
+                return torch.matmul(e, singles.transpose(-1, -2)).squeeze(-1)
+
+            if e_idc.size(-1) == 1 and u_idc.size(-1) == 1:
+                singles = e * u
+                return torch.matmul(p, singles.transpose(-1, -2)).squeeze(-1)
+
+            if e_idc.size(-1) == 1 and p_idc.size(-1) == 1:
+                singles = e * p
+                return torch.matmul(u, singles.transpose(-1, -2)).squeeze(-1)
+
+        return torch.sum(e * p * u, dim=-1)
+
+    def init(self, one_hot=False):
+        for name, param in self.named_parameters():
+            if one_hot and name == "node_embeddings":
+                self.node_embeddings = torch.eye(self.node_embeddings.shape[1])
+                continue
+            if one_hot and name == "edge_embeddings":
+                self.edge_embeddings = torch.eye(self.edge_embeddings.shape[1])
+                continue
+
+            nn.init.normal_(param)
+
+        if self.fuse_model is not None:
+            self.fuse_model.init()
+
+
+class LiteralE(nn.Module):
+    def __init__(self,
+                 num_entities,
+                 embedding_dim,
+                 feature_dim):
+        """
+        LiteralE embedding model
+
+        embedding_dim :: length of entity vector (H in paper)
+        feature_dim  :: length of entity feature vector (N_d in paper)
+        """
+        super().__init__()
+
+        self.W_ze = nn.Parameter(torch.empty((num_entities,
+                                              embedding_dim,  # transposed
+                                              embedding_dim)))
+        self.W_zl = nn.Parameter(torch.empty((num_entities,
+                                              embedding_dim,  # transposed
+                                              feature_dim)))
+
+        # split W_h in W_he and W_hl for cheaper computation
+        self.W_he = nn.Parameter(torch.empty((num_entities,
+                                              embedding_dim,  # transposed
+                                              embedding_dim)))
+        self.W_hl = nn.Parameter(torch.empty((num_entities,
+                                              embedding_dim,  # transposed
+                                              feature_dim)))
+
+        self.b = nn.Parameter(torch.empty((embedding_dim)))
+
+    def forward(self, X):
+        # e := length H
+        # l := length N_d
+        e, l, index = X
+
+        Wze = torch.einsum('nih,nh->ni', self.W_ze[index], e[index])
+        Wzl = torch.einsum('nih,nh->ni', self.W_zl[index], l[index])
+        Whe = torch.einsum('nih,nh->ni', self.W_he[index], e[index])
+        Whl = torch.einsum('nih,nh->ni', self.W_hl[index], l[index])
+
+        Z = torch.sigmoid(Wze + Wzl + self.b)  # out H
+        H = torch.tanh(Whe + Whl)  # out H
+
+        # compute g
+        return Z * H + (1 - Z) * e[index]
+
+    def init(self):
+        for param in self.parameters():
+            nn.init.normal_(param)

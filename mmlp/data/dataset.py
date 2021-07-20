@@ -1,6 +1,6 @@
-#!/usr/bin.env python
+#!/usr/bin/env python
 
-from os.path import join
+from os.path import isfile, join
 
 import numpy as np
 import pandas as pd
@@ -44,10 +44,15 @@ class Data:
         self.num_classes = None
 
         """ Split data: a matrix with entity indices in column 0 and class
-        indices in column 1."""
+        indices in column 1 for node classification"""
         self.train = None
         self.test = None
         self.valid = None
+
+        """ Split data: an array with triple indices for link prediction."""
+        self.train_lp = None
+        self.test_lp = None
+        self.valid_lp = None
 
         self._dt_l2g = {}
         self._dt_g2l = {}
@@ -58,25 +63,43 @@ class Data:
                                       dtype=np.int,
                                       delimiter=',', skiprows=1)
 
-            self.i2r, self.r2i = load_indices(join(path, 'relations.int.csv'))
-            self.i2n, self.n2i = load_entities(join(path, 'nodes.int.csv'))
+            self.i2r, self.r2i = load_relations(join(path, 'relations.int.csv'))
+            self.i2n, self.n2i = load_nodes(join(path, 'nodes.int.csv'))
 
             self.num_nodes = len(self.i2n)
             self.num_relations = len(self.i2r)
 
-            self.train = np.loadtxt(join(path, 'training.int.csv'),
-                                    dtype=np.int,
-                                    delimiter=',', skiprows=1)
-            self.test = np.loadtxt(join(path, 'testing.int.csv'),
-                                   dtype=np.int,
-                                   delimiter=',', skiprows=1)
-            self.valid = np.loadtxt(join(path, 'validation.int.csv'),
-                                    dtype=np.int,
-                                    delimiter=',', skiprows=1)
+            f_lp_splits = join(path, 'linkprediction_splits.int.csv')
+            if isfile(f_lp_splits):
+                lp_splits = np.loadtxt(f_lp_splits,
+                                       dtype=np.int,
+                                       delimiter=',', skiprows=1)
 
-            self.num_classes = len(set(np.concatenate([self.train[:, 1],
-                                                       self.test[:, 1],
-                                                       self.valid[:, 1]])))
+                self.train_lp = lp_splits[lp_splits[:, 1] == 0][:, 0]
+                self.test_lp = lp_splits[lp_splits[:, 1] == 1][:, 0]
+                self.valid_lp = lp_splits[lp_splits[:, 1] == 2][:, 0]
+
+            classes = set()
+            f_train = join(path, 'training.int.csv')
+            if isfile(f_train):
+                self.train = np.loadtxt(f_train,
+                                        dtype=np.int,
+                                        delimiter=',', skiprows=1)
+                classes |= set(self.train[:, 1])
+            f_test = join(path, 'testing.int.csv')
+            if isfile(f_test):
+                self.test = np.loadtxt(f_test,
+                                       dtype=np.int,
+                                       delimiter=',', skiprows=1)
+                classes |= set(self.test[:, 1])
+            f_valid = join(path, 'validation.int.csv')
+            if isfile(f_valid):
+                self.valid = np.loadtxt(f_valid,
+                                        dtype=np.int,
+                                        delimiter=',', skiprows=1)
+                classes |= set(self.valid[:, 1])
+
+            self.num_classes = len(classes)
 
     def datatype_g2l(self, dtype, copy=True):
         """
@@ -150,7 +173,7 @@ def datatype_key(string):
     return '9' + string
 
 
-def load_indices(file):
+def load_relations(file):
     df = pd.read_csv(file, na_values=[], keep_default_na=False)
 
     assert len(df.columns) == 2, "CSV file should have two columns"
@@ -170,10 +193,10 @@ def load_indices(file):
     return i2l, l2i
 
 
-def load_entities(file):
+def load_nodes(file):
     df = pd.read_csv(file, na_values=[], keep_default_na=False)
 
-    assert len(df.columns) == 3, 'Entity file should have three columns'
+    assert len(df.columns) == 3, 'CSV file should have three columns'
     assert not df.isnull().any().any(), f'CSV file {file} has missing values'
 
     idxs = df['index'].tolist()
@@ -202,10 +225,19 @@ def generate_pickled(flags):
     g = Data(flags.input)
 
     dataset['num_nodes'] = g.num_nodes
+
+    # needed for classification
     dataset['num_classes'] = g.num_classes
     dataset['training'] = g.train
     dataset['testing'] = g.test
     dataset['validation'] = g.valid
+
+    # needed for link prediction
+    dataset['entities'] = g.datatype_l2g('iri')
+    dataset['triples'] = g.triples
+    dataset['training_lp'] = g.train_lp
+    dataset['testing_lp'] = g.test_lp
+    dataset['validation_lp'] = g.valid_lp
     for modality in flags.modalities:
         print("[%s] Generating data" % modality.upper())
         datatypes = set()
