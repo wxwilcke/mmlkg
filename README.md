@@ -1,6 +1,6 @@
 # End-to-End Multimodal Machine Learning on Knowledge Graphs
 
-This packages provides multimodal node classification and link prediction for RDF knowledge graphs, by feeding literal nodes to modality-specific neural encoders, of which the resulting embeddings are used as input for a neural network (node classification) a translation model (link prediction). By default, the network is a simple two-layer MLP, whereas the translation model consists of DistMult plus LiteralE.
+This packages provides multimodal node classification and link prediction for RDF knowledge graphs, by feeding literal nodes to modality-specific neural encoders, of which the resulting embeddings are used as input for a neural network (node classification) or translation model (link prediction). By default, the network is a simple two-layer MLP, whereas the translation model consists of DistMult plus LiteralE.
 
 The purpose of this package is to provide baselines for the [MR-GCN](https://gitlab.com/wxwilcke/mrgcn).
 

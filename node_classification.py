@@ -301,6 +301,11 @@ if __name__ == "__main__":
         output_writer = TSV(f_out, mode='w')
         print("[SAVE] Writing output to %s" % f_out)
 
+        f_json = out_dir + "flags_%s.json" % t_init
+        with open(f_json, 'w') as jf:
+            json.dump(vars(flags), jf, indent=4)
+        print("[SAVE] Writing flags to %s" % f_json)
+
         if flags.test:
             f_lbl = out_dir + "labels_%s.tsv" % t_init
             label_writer = TSV(f_lbl, mode='w')
