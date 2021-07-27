@@ -12,10 +12,10 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 
-from mmlp.data import dataset
-from mmlp.data.tsv import TSV
-from mmlp.models import DistMult, NeuralEncoders
-from mmlp.utils import (add_noise_, binary_crossentropy,
+from mmlkg.data import dataset
+from mmlkg.data.tsv import TSV
+from mmlkg.models import DistMult, NeuralEncoders
+from mmlkg.utils import (add_noise_, binary_crossentropy,
                         entity_to_entity_triples, global_to_local)
 
 

@@ -8,7 +8,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torchvision import models
 
-from mmlp.utils import mkbatches, mkbatches_varlength, zero_pad
+from mmlkg.utils import mkbatches, mkbatches_varlength, zero_pad
 
 
 _DIM_DEFAULT = {"numerical": 4,

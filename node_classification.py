@@ -12,10 +12,10 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 
-from mmlp.data import dataset
-from mmlp.data.tsv import TSV
-from mmlp.models import MLP, NeuralEncoders
-from mmlp.utils import add_noise_, categorical_accuracy
+from mmlkg.data import dataset
+from mmlkg.data.tsv import TSV
+from mmlkg.models import MLP, NeuralEncoders
+from mmlkg.utils import add_noise_, categorical_accuracy
 
 
 _MODALITIES = ["textual", "numerical", "temporal", "visual", "spatial"]

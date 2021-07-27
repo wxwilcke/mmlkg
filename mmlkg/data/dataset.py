@@ -5,8 +5,8 @@ from os.path import isfile, join
 import numpy as np
 import pandas as pd
 
-from mmlp.data.xsd_hierarchy import XSDHierarchy
-from mmlp.vectorizers import numerical, temporal, textual, spatial, visual
+from mmlkg.data.xsd_hierarchy import XSDHierarchy
+from mmlkg.vectorizers import numerical, temporal, textual, spatial, visual
 
 
 _SPECIAL = {'iri': '0', 'blank_node': '1', 'none': '2'}
