@@ -1,7 +1,7 @@
 index,annotation
-0,http://www.opengis.net/ont/geosparql#wktLiteral
-1,http://www.w3.org/2001/XMLSchema#anyURI
-2,http://kgbench.info/dt#base64Image
+0,http://kgbench.info/dt#base64Image
+1,http://www.opengis.net/ont/geosparql#wktLiteral
+2,http://www.w3.org/2001/XMLSchema#anyURI
 3,http://www.w3.org/2001/XMLSchema#date
 4,http://www.w3.org/2001/XMLSchema#dateTime
 5,http://www.w3.org/2001/XMLSchema#float

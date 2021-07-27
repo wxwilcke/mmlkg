@@ -4,8 +4,19 @@ import argparse
 import csv
 
 import pandas as pd
+from rdflib.namespace import XSD
 from rdflib.term import BNode, Literal, URIRef
 from rdflib_hdt import HDTStore
+
+
+def _node_str(node):
+    value = str(node)
+
+    # avoid rdflib bug which serializes years as dates
+    if isinstance(node, Literal) and node.datatype is XSD.gYear:
+        value = value[:4]
+
+    return value
 
 
 def _node_type(node):
@@ -37,10 +48,10 @@ def _generate_context(graphs):
             datatypes.add(s_type)
             datatypes.add(o_type)
 
-            entities.add((str(s), s_type))
-            entities.add((str(o), o_type))
+            entities.add((_node_str(s), s_type))
+            entities.add((_node_str(o), o_type))
 
-            relations.add(str(p))
+            relations.add(_node_str(p))
 
     i2e = list(entities)
     i2r = list(relations)
@@ -55,16 +66,11 @@ def _generate_context(graphs):
     r2i = {r: i for i, r in enumerate(i2r)}
 
     triples = list()
-    g_len_map = dict()
     for g in graphs:
-        g_file = g.hdt_document.file_path
-        g_len_map[g_file] = 0
         for (s, p, o), _ in g.triples((None, None, None), None):
-            triples.append([e2i[(str(s), _node_type(s))],
-                            r2i[str(p)],
-                            e2i[(str(o), _node_type(o))]])
-
-            g_len_map[g_file] += 1
+            triples.append([e2i[(_node_str(s), _node_type(s))],
+                            r2i[_node_str(p)],
+                            e2i[(_node_str(o), _node_type(o))]])
 
     triples = pd.DataFrame(triples,
                            columns=["index_lhs_node",
@@ -76,7 +82,7 @@ def _generate_context(graphs):
     relations = pd.DataFrame(enumerate(i2r), columns=['index', 'label'])
     nodetypes = pd.DataFrame(enumerate(i2d), columns=['index', 'annotation'])
 
-    return ((nodes, nodetypes, relations, triples), e2i, r2i, g_len_map)
+    return ((nodes, nodetypes, relations, triples), e2i, r2i)
 
 
 def _generate_splits(splits, e2i, r2i):
@@ -124,38 +130,53 @@ def generate_node_classification_mapping(flags):
     if flags.valid is not None:
         valid = pd.read_csv(flags.valid)
 
-    data, e2i, r2i, _ = _generate_context(g)
+    data, e2i, r2i = _generate_context(g)
     df_splits = _generate_splits((train, test, valid), e2i, r2i)
 
     return (data, df_splits)
 
 
 def generate_link_prediction_mapping(flags):
-    g_list = list()
-    for hdtfile in [flags.train, flags.test, flags.valid]:
-        if hdtfile is not None:
-            g_list.append(HDTStore(hdtfile))
+    data = None
+    if flags.context is None:
+        g_list = list()
+        for hdtfile in [flags.train, flags.test, flags.valid]:
+            if hdtfile is not None:
+                g_list.append(HDTStore(hdtfile))
 
-    data, e2i, r2i, g_len = _generate_context(g_list)
+        data, e2i, r2i = _generate_context(g_list)
+        df_nodes, _, df_relations, df_triples = data
+
+        df_nodes = df_nodes.set_index('label')
+        df_relations = df_relations.set_index('label')
+    else:
+        # allign indices with established data
+        path = flags.context if flags.context.endswith('/')\
+            else flags.context + '/'
+        df_triples = pd.read_csv(path + "triples.int.csv")
+        df_nodes = pd.read_csv(path + "nodes.int.csv", index_col='label')
+        df_relations = pd.read_csv(path + "relations.int.csv",
+                                   index_col='label')
 
     # map triples to split index
     fact_idc = list()
     split_idc = list()
-    num_facts = 0
+    facts2i = {tuple(df_triples.iloc[i]): i for i in range(len(df_triples))}
     for i, hdtfile in enumerate([flags.train, flags.test, flags.valid]):
-        if hdtfile not in g_len.keys():
+        if hdtfile is None:
             continue
 
-        g_num_facts = g_len[hdtfile]
-        fact_idc.append(pd.Series(range(num_facts, num_facts+g_num_facts),
-                                  dtype=int))
-        split_idc.append(pd.Series([i] * g_num_facts, dtype=int))
+        g = HDTStore(hdtfile)
+        for (s, p, o), _ in g.triples((None, None, None), None):
+            s_int = df_nodes.loc[_node_str(s)]['index']
+            p_int = df_relations.loc[_node_str(p)]['index']
+            o_int = df_nodes.loc[_node_str(o)]['index']
 
-        num_facts += g_num_facts
+            index = facts2i[(s_int, p_int, o_int)]
+            fact_idc.append(index)
+            split_idc.append(i)
 
-    df_splits = pd.concat([pd.concat(fact_idc, axis=0, ignore_index=True),
-                           pd.concat(split_idc, axis=0, ignore_index=True)],
-                          axis=1)
+    df_splits = pd.concat([pd.Series(fact_idc), pd.Series(split_idc)], axis=1)
     df_splits.columns = ["triple_index", "split_index"]
 
     return (data, df_splits)
@@ -164,7 +185,9 @@ def generate_link_prediction_mapping(flags):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("-c", "--context", help="HDT graph (node "
-                        + "classification only)", default=None)
+                        + "classification) or previously generated CSV "
+                        + "directory to align to (link prediction)",
+                        default=None)
     parser.add_argument("-d", "--dir", help="Output directory", default="./")
     parser.add_argument("-ts", "--train", help="Training set (CSV) with "
                         + "samples on the left-hand side and their classes "
@@ -181,7 +204,7 @@ if __name__ == "__main__":
     flags = parser.parse_args()
 
     path = flags.dir if flags.dir.endswith('/') else flags.dir + '/'
-    if flags.context is not None:
+    if flags.context.lower().endswith('.hdt'):
         data, splits = generate_node_classification_mapping(flags)
 
         df_train, df_test, df_valid = splits
@@ -199,11 +222,12 @@ if __name__ == "__main__":
         df_splits.to_csv(path+'linkprediction_splits.int.csv',
                          index=False, header=True)
 
-    df_nodes, df_nodetypes, df_relations, df_triples = data
+    if data is not None:
+        df_nodes, df_nodetypes, df_relations, df_triples = data
 
-    df_nodes.to_csv(path+'nodes.int.csv', index=False, header=True,
-                    quoting=csv.QUOTE_NONNUMERIC)
-    df_relations.to_csv(path+'relations.int.csv', index=False, header=True,
+        df_nodes.to_csv(path+'nodes.int.csv', index=False, header=True,
                         quoting=csv.QUOTE_NONNUMERIC)
-    df_nodetypes.to_csv(path+'nodetypes.int.csv', index=False, header=True)
-    df_triples.to_csv(path+'triples.int.csv', index=False, header=True)
+        df_relations.to_csv(path+'relations.int.csv', index=False, header=True,
+                            quoting=csv.QUOTE_NONNUMERIC)
+        df_nodetypes.to_csv(path+'nodetypes.int.csv', index=False, header=True)
+        df_triples.to_csv(path+'triples.int.csv', index=False, header=True)

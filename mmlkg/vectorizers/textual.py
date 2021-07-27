@@ -50,7 +50,7 @@ def generate_data(g, datatypes):
             if seq_length <= 0:
                 continue
 
-            a = np.zeros(shape=(_VOCAB_MAX_IDX, seq_length), dtype=np.int8)
+            a = np.zeros(shape=(_VOCAB_MAX_IDX, seq_length), dtype=np.float32)
             a[sequence, range(seq_length)] = 1
 
             # global idx of entity to which this belongs

@@ -7,12 +7,13 @@ def readme():
     with open('README.md') as f:
         return f.read()
 
+
 setup(
-    name='mmlp',
+    name='mmlkg',
     version='0.2',
     author='Xander Wilcke',
     author_email='w.x.wilcke@vu.nl',
-    url='https://gitlab.com/wxwilcke/mmlp',
+    url='https://gitlab.com/wxwilcke/mmlkg',
     description='End-to-End Multimodal Machine Learning for RDF Knowledge Graphs',
     license='GLP3',
     include_package_data=True,
@@ -27,5 +28,5 @@ setup(
         'pandas',
         'deep_geometry'
     ],
-    packages=['mmlp'],
+    packages=['mmlkg'],
 )

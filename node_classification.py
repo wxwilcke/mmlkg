@@ -164,9 +164,9 @@ def main(dataset, output_writer, label_writer, device, config, flags):
            and modality in config["encoders"].keys():
             modconf = config["encoders"][modality]
             m_noise = 0.01 if "m_noise" not in modconf.keys()\
-                      else modconf["m_noise"]
+                else modconf["m_noise"]
 
-            if "p_noise" in modconf.keys():
+            if "p_noise" in modconf.keys() and modconf["p_noise"] > 0:
                 add_noise_(X[modality], modconf["p_noise"], m_noise)
 
     if len(X) <= 0:

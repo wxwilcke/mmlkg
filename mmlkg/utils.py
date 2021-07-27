@@ -35,12 +35,18 @@ def mkbatches_varlength(sample_idx, seq_length_map,
     return list(zip(seq_assignments, sample_assignments))
 
 
-def zero_pad(samples, time_dim):
+def zero_pad(samples, time_dim, min_length=-1):
     if time_dim < 0:
         return samples
 
     max_height = max([t.shape[0] for t in samples])
     max_width = max([t.shape[1] for t in samples])
+
+    if min_length > 0:
+        if time_dim == 0:
+            max_height = max(max_height, min_length)
+        elif time_dim == 1:
+            max_width = max(max_width, min_length)
 
     return [f.pad(t, [0, max_width-t.shape[1], 0, max_height-t.shape[0]])
             for t in samples]

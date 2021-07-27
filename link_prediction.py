@@ -551,6 +551,8 @@ if __name__ == "__main__":
                         default=None)
     parser.add_argument("--save_dataset", help="Save dataset to disk",
                         action="store_true")
+    parser.add_argument("--save_dataset_and_exit", help="Save dataset to disk "
+                        + "and exit", action="store_true")
     parser.add_argument("--save_output", help="Save run to disk",
                         action="store_true")
     parser.add_argument("--save_checkpoint", help="Save model to disk",
