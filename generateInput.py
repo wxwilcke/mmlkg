@@ -9,6 +9,28 @@ from rdflib.term import BNode, Literal, URIRef
 from rdflib_hdt import HDTStore
 
 
+def _solve_literal_allignment(df_triples, node,  node_series,
+                              subject_predicate):
+    annotation = node.datatype if node.datatype is not None\
+        else node.language
+    if annotation is not None:
+        node_series = node_series[node_series.annotation == str(annotation)]
+
+    index = node_series['index']
+    if node_series.shape[0] > 1:
+        # more than 1 value with the same datatype (or None)
+        # retrieve all objects for this s, p pair and check against node_series
+        s_int, p_int = subject_predicate
+        objects = df_triples[(df_triples['index_lhs_node'] == s_int) &
+                             (df_triples['index_relation'] == p_int)]
+
+        index_set = set(objects['index_rhs_node']) & set(node_series['index'])
+        if len(index_set) == 1:
+            index = index_set.pop()
+
+    return int(index)
+
+
 def _node_str(node):
     value = str(node)
 
@@ -170,9 +192,20 @@ def generate_link_prediction_mapping(flags):
         for (s, p, o), _ in g.triples((None, None, None), None):
             s_int = df_nodes.loc[_node_str(s)]['index']
             p_int = df_relations.loc[_node_str(p)]['index']
-            o_int = df_nodes.loc[_node_str(o)]['index']
 
-            index = facts2i[(s_int, p_int, o_int)]
+            o_series = df_nodes.loc[_node_str(o)]
+            o_int = o_series['index']
+            if isinstance(o_series, pd.DataFrame):
+                # there are more literals with this value
+                o_int = _solve_literal_allignment(df_triples, o, o_series,
+                                                  (s_int, p_int))
+
+            try:
+                index = facts2i[(s_int, p_int, o_int)]
+            except Exception:
+                print("Error mapping triple: (%s, %s, %s)" % (s, p, o))
+                continue
+
             fact_idc.append(index)
             split_idc.append(i)
 
