@@ -217,27 +217,26 @@ def load_nodes(file):
     return i2n, n2i
 
 
-def generate_pickled(flags):
-    dataset = dict()
+def generate_dataset(flags):
     xsd_tree = XSDHierarchy()
 
     # read data dir
     g = Data(flags.input)
 
-    dataset['num_nodes'] = g.num_nodes
+    yield ('num_nodes', g.num_nodes)
 
     # needed for classification
-    dataset['num_classes'] = g.num_classes
-    dataset['training'] = g.train
-    dataset['testing'] = g.test
-    dataset['validation'] = g.valid
+    yield ('num_classes', g.num_classes)
+    yield ('training', g.train)
+    yield ('testing', g.test)
+    yield ('validation', g.valid)
 
     # needed for link prediction
-    dataset['entities'] = g.datatype_l2g('iri')
-    dataset['triples'] = g.triples
-    dataset['training_lp'] = g.train_lp
-    dataset['testing_lp'] = g.test_lp
-    dataset['validation_lp'] = g.valid_lp
+    yield ('entities', g.datatype_l2g('iri'))
+    yield ('triples', g.triples)
+    yield ('training_lp', g.train_lp)
+    yield ('testing_lp', g.test_lp)
+    yield ('validation_lp', g.valid_lp)
     for modality in flags.modalities:
         print("[%s] Generating data" % modality.upper())
         datatypes = set()
@@ -272,9 +271,7 @@ def generate_pickled(flags):
             print(" No information found")
             continue
 
-        dataset[modality] = data
-
-    return dataset
+        yield (modality, data)
 
 
 def expand_prefix(datatypes):

@@ -1,10 +1,9 @@
 #! /usr/bin/env python
 
 import argparse
-import bz2
-import pickle
 
 from mmlkg.data import dataset
+from mmlkg.data.hdf5 import HDF5
 
 
 _MODALITIES = ["textual", "numerical", "temporal", "visual", "spatial"]
@@ -26,6 +25,29 @@ if __name__ == "__main__":
     out_dir = flags.input if flags.output is None else flags.output
     out_dir = out_dir + '/' if not out_dir.endswith('/') else out_dir
 
-    data = dataset.generate_pickled(flags)
-    with bz2.BZ2File(out_dir + 'dataset.pbz2', 'wb') as f:
-        pickle.dump(data, f)
+    with HDF5(out_dir + 'dataset.h5', 'w') as hf:
+        nc_data = dict()
+        lp_data = dict()
+        for name, item in dataset.generate_dataset(flags):
+            if name == 'num_nodes':
+                hf.write_metadata(name, item)
+            elif name in _MODALITIES:
+                hf.write_modality_data(item, name)
+            elif name in ['num_classes',
+                          'training',
+                          'testing',
+                          'validation']:
+                nc_data[name] = item
+            elif name in ['entities',
+                          'triples',
+                          'training_lp',
+                          'testing_lp',
+                          'validation_lp']:
+                lp_data[name] = item
+            else:
+                continue
+
+        if len(nc_data) == 4:
+            hf.write_task_data(nc_data)
+        if len(lp_data) == 5:
+            hf.write_task_data(lp_data)
