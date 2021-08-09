@@ -20,10 +20,7 @@ setup(
     zip_safe=True,
     install_requires=[
         'torch',
-        'torchvision',
         'numpy',
-        'rdflib',
-        'rdflib-hdt',
         'pillow',
         'pandas',
         'deep_geometry'

@@ -4,9 +4,9 @@ import argparse
 import csv
 
 import pandas as pd
-from rdflib.namespace import XSD
-from rdflib.term import BNode, Literal, URIRef
-from rdflib_hdt import HDTStore
+from hdt import HDTDocument
+
+from mmlkg.data.rdf import BNode, Literal, IRIRef, parse_statement
 
 
 def _solve_literal_allignment(df_triples, node,  node_series,
@@ -34,17 +34,13 @@ def _solve_literal_allignment(df_triples, node,  node_series,
 def _node_str(node):
     value = str(node)
 
-    # avoid rdflib bug which serializes years as dates
-    if isinstance(node, Literal) and node.datatype is XSD.gYear:
-        value = value[:4]
-
     return value
 
 
 def _node_type(node):
     if isinstance(node, BNode):
         return "blank_node"
-    elif isinstance(node, URIRef):
+    elif isinstance(node, IRIRef):
         return "iri"
     elif isinstance(node, Literal):
         if node.datatype is not None:
@@ -63,7 +59,10 @@ def _generate_context(graphs):
     datatypes = set()
 
     for g in graphs:
-        for (s, p, o), _ in g.triples((None, None, None), None):
+        triples, _ = g.search_triples("", "", "")
+        for triple in triples:
+            s, p, o = parse_statement(triple)
+
             s_type = _node_type(s)
             o_type = _node_type(o)
 
@@ -87,24 +86,26 @@ def _generate_context(graphs):
     e2i = {e: i for i, e in enumerate(i2e)}
     r2i = {r: i for i, r in enumerate(i2r)}
 
-    triples = list()
+    triples_int = list()
     for g in graphs:
-        for (s, p, o), _ in g.triples((None, None, None), None):
-            triples.append([e2i[(_node_str(s), _node_type(s))],
-                            r2i[_node_str(p)],
-                            e2i[(_node_str(o), _node_type(o))]])
+        triples, _ = g.search_triples("", "", "")
+        for triple in triples:
+            s, p, o = parse_statement(triple)
+            triples_int.append([e2i[(_node_str(s), _node_type(s))],
+                                r2i[_node_str(p)],
+                                e2i[(_node_str(o), _node_type(o))]])
 
-    triples = pd.DataFrame(triples,
-                           columns=["index_lhs_node",
-                                    "index_relation",
-                                    "index_rhs_node"])
+    triples_int = pd.DataFrame(triples_int,
+                               columns=["index_lhs_node",
+                                        "index_relation",
+                                        "index_rhs_node"])
 
     nodes = [(i, dt, ent) for i, (ent, dt) in enumerate(i2e)]
     nodes = pd.DataFrame(nodes, columns=['index', 'annotation', 'label'])
     relations = pd.DataFrame(enumerate(i2r), columns=['index', 'label'])
     nodetypes = pd.DataFrame(enumerate(i2d), columns=['index', 'annotation'])
 
-    return ((nodes, nodetypes, relations, triples), e2i, r2i)
+    return ((nodes, nodetypes, relations, triples_int), e2i, r2i)
 
 
 def _generate_splits(splits, e2i, r2i):
@@ -142,7 +143,7 @@ def _generate_splits(splits, e2i, r2i):
 
 def generate_node_classification_mapping(flags):
     hdtfile = flags.context
-    g = [HDTStore(hdtfile)]
+    g = [HDTDocument(hdtfile)]
 
     train, test, valid = None, None, None
     if flags.train is not None:
@@ -158,19 +159,36 @@ def generate_node_classification_mapping(flags):
     return (data, df_splits)
 
 
+def _generate_link_prediction_mapping_standalone(flags):
+    g_list = list()
+    g_len_list = list()
+    for hdtfile in [flags.train, flags.test, flags.valid]:
+        if hdtfile is not None:
+            g = HDTDocument(hdtfile)
+
+            g_list.append(g)
+            g_len_list.append(g.total_triples)
+        else:
+            g_len_list.append(0)
+
+    data, e2i, r2i = _generate_context(g_list)
+
+    num_facts = sum(g_len_list)
+    fact_idc = pd.Series(range(num_facts))
+    split_idc = pd.Series([*[0]*g_len_list[0],
+                           *[1]*g_len_list[1],
+                           *[2]*g_len_list[2]])
+
+    df_splits = pd.concat([pd.Series(fact_idc), pd.Series(split_idc)], axis=1)
+    df_splits.columns = ["triple_index", "split_index"]
+
+    return (data, df_splits)
+
+
 def generate_link_prediction_mapping(flags):
     data = None
     if flags.context is None:
-        g_list = list()
-        for hdtfile in [flags.train, flags.test, flags.valid]:
-            if hdtfile is not None:
-                g_list.append(HDTStore(hdtfile))
-
-        data, e2i, r2i = _generate_context(g_list)
-        df_nodes, _, df_relations, df_triples = data
-
-        df_nodes = df_nodes.set_index('label')
-        df_relations = df_relations.set_index('label')
+        return _generate_link_prediction_mapping_standalone(flags)
     else:
         # allign indices with established data
         path = flags.context if flags.context.endswith('/')\
@@ -181,6 +199,7 @@ def generate_link_prediction_mapping(flags):
                                    index_col='label')
 
     # map triples to split index
+    p_errors = set()
     fact_idc = list()
     split_idc = list()
     facts2i = {tuple(df_triples.iloc[i]): i for i in range(len(df_triples))}
@@ -188,10 +207,20 @@ def generate_link_prediction_mapping(flags):
         if hdtfile is None:
             continue
 
-        g = HDTStore(hdtfile)
-        for (s, p, o), _ in g.triples((None, None, None), None):
+        g = HDTDocument(hdtfile)
+        triples, _ = g.search_triples("", "", "")
+        for triple in triples:
+            s, p, o = parse_statement(triple)
+
             s_int = df_nodes.loc[_node_str(s)]['index']
-            p_int = df_relations.loc[_node_str(p)]['index']
+            try:
+                p_int = df_relations.loc[_node_str(p)]['index']
+            except KeyError:
+                # assume this is a target link not included in the
+                # classification dataset
+                p_errors.add(p)
+
+                continue
 
             o_series = df_nodes.loc[_node_str(o)]
             o_int = o_series['index']
@@ -208,6 +237,9 @@ def generate_link_prediction_mapping(flags):
 
             fact_idc.append(index)
             split_idc.append(i)
+
+    for p in p_errors:
+        print("Not in context: %s" % _node_str(p))
 
     df_splits = pd.concat([pd.Series(fact_idc), pd.Series(split_idc)], axis=1)
     df_splits.columns = ["triple_index", "split_index"]
@@ -237,7 +269,7 @@ if __name__ == "__main__":
     flags = parser.parse_args()
 
     path = flags.dir if flags.dir.endswith('/') else flags.dir + '/'
-    if flags.context.lower().endswith('.hdt'):
+    if flags.context is not None and flags.context.lower().endswith('.hdt'):
         data, splits = generate_node_classification_mapping(flags)
 
         df_train, df_test, df_valid = splits
