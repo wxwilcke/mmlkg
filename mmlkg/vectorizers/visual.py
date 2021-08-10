@@ -7,8 +7,8 @@ from PIL import Image
 import numpy as np
 
 
-_IMG_SIZE = 256
-_IMG_CROP = 224
+_IMG_SIZE = 75
+_IMG_CROP = 64
 _IMG_MODE = "RGB"
 
 
