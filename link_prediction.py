@@ -515,7 +515,8 @@ def main(dataset, output_writer, ranks_writer, devices, config, flags):
                                        ranks['flt']))
         else:
             ranks_writer.writerow(['raw'])
-            ranks_writer.writerows(ranks['raw'])
+            for row in ranks['raw']:
+                ranks_writer.writerow(row)
 
     return (model, optimizer, loss, epoch)
 
