@@ -23,6 +23,7 @@ setup(
         'numpy',
         'pillow',
         'pandas',
+        'pyhdt',
         'deep_geometry'
     ],
     packages=['mmlkg'],

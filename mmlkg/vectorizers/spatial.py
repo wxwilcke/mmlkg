@@ -28,10 +28,14 @@ def generate_data(g, datatypes, time_dim=1):
         datatype_int = datatype_to_int_map[datatype]
         for g_idx in g.datatype_l2g(datatype):
             value, _ = g.i2n[g_idx]
+            value.strip()
 
             vec = None
             try:
                 value = str(value)
+                if value.startswith('"') or value.startswith("'"):
+                    # nested string
+                    value = value[1:-1]
                 vec = gv.vectorize_wkt(value)[:_MAX_POINTS, :]
             except ValueError:
                 continue

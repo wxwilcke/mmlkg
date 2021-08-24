@@ -33,6 +33,9 @@ def generate_data(g, datatypes):
         datatype_int = datatype_to_int_map[datatype]
         for g_idx in g.datatype_l2g(datatype):
             value, _ = g.i2n[g_idx]
+            if value.startswith('"') or value.startswith("'"):
+                # nested string
+                value = value[1:-1]
 
             im = None
             try:
