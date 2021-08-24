@@ -145,6 +145,10 @@ class NeuralEncoders(nn.Module):
                                    if split_idc[i] in X_idc]
                 split_idc_filtered = split_idc[split_idc_local]
 
+                # no entities have this datatype
+                if len(split_idc_filtered) <= 0:
+                    continue
+
                 # match entity indices to sample indices
                 X_split_idc = [np.where(X_idc == i)[0][0]
                                for i in split_idc_filtered]

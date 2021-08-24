@@ -147,11 +147,11 @@ def generate_node_classification_mapping(flags):
 
     train, test, valid = None, None, None
     if flags.train is not None:
-        train = pd.read_csv(flags.train)
+        train = pd.read_csv(flags.train, header=None)
     if flags.test is not None:
-        test = pd.read_csv(flags.test)
+        test = pd.read_csv(flags.test, header=None)
     if flags.valid is not None:
-        valid = pd.read_csv(flags.valid)
+        valid = pd.read_csv(flags.valid, header=None)
 
     data, e2i, r2i = _generate_context(g)
     df_splits = _generate_splits((train, test, valid), e2i, r2i)
