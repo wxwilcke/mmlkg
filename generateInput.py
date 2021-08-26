@@ -11,8 +11,12 @@ from mmlkg.data.rdf import BNode, Literal, IRIRef, parse_statement
 
 def _solve_literal_allignment(df_triples, node,  node_series,
                               subject_predicate):
-    annotation = node.datatype if node.datatype is not None\
-        else node.language
+    annotation = None
+    if node.datatype is not None:
+        annotation = node.datatype
+    elif node.language is not None:
+        annotation = '@' + node.language
+
     if annotation is not None:
         node_series = node_series[node_series.annotation == str(annotation)]
 
@@ -33,6 +37,7 @@ def _solve_literal_allignment(df_triples, node,  node_series,
 
 def _node_str(node):
     value = str(node)
+    value.strip()
 
     return value
 
