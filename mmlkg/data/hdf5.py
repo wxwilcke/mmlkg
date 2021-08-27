@@ -43,9 +43,20 @@ class HDF5:
 
         return dataset
 
-    def write_dataset(self, dataset):
+    def write_dataset(self, dataset, task=None):
         self.write_metadata('num_nodes', dataset['num_nodes'])
-        self.write_task_data(dataset)
+
+        if task is None:
+            tasks = [self.NODE_CLASSIFICATION, self.LINK_PREDICTION]
+        elif isinstance(task, str):
+            tasks = [task]
+        else:
+            # assume iterable
+            tasks = task
+
+        for task in tasks:
+            self.write_task_data(dataset, task)
+
         for modality in _MODALITIES:
             if modality in dataset.keys():
                 self.write_modality_data(dataset[modality], modality)
@@ -60,12 +71,12 @@ class HDF5:
             self._write_data_to_group(group, datatype_set,
                                       self._compression)
 
-    def write_task_data(self, dataset):
-        if 'num_classes' in dataset.keys():
+    def write_task_data(self, dataset, task):
+        if task == self.NODE_CLASSIFICATION:
             nc_group = self._hf.create_group(self.NODE_CLASSIFICATION)
             self._write_data_node_classification(nc_group, dataset,
                                                  compression=self._compression)
-        if 'triples' in dataset.keys():
+        if task == self.LINK_PREDICTION:
             lp_group = self._hf.create_group(self.LINK_PREDICTION)
             self._write_data_link_prediction(lp_group, dataset,
                                              compression=self._compression)

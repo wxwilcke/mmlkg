@@ -297,7 +297,7 @@ if __name__ == "__main__":
             hf = HDF5(path, mode='w')
 
             print('[SAVE] Saving HDF5 dataset to %s...' % path)
-            hf.write_dataset(data)
+            hf.write_dataset(data, task=HDF5.NODE_CLASSIFICATION)
 
     output_writer = None
     label_writer = None

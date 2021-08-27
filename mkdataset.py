@@ -37,13 +37,15 @@ if __name__ == "__main__":
                           'training',
                           'testing',
                           'validation']:
-                nc_data[name] = item
+                if item is not None:
+                    nc_data[name] = item
             elif name in ['entities',
                           'triples',
                           'training_lp',
                           'testing_lp',
                           'validation_lp']:
-                lp_data[name] = item
+                if item is not None:
+                    lp_data[name] = item
             else:
                 continue
 

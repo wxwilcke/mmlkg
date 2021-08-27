@@ -601,7 +601,7 @@ if __name__ == "__main__":
             hf = HDF5(path, mode='w')
 
             print('[SAVE] Saving HDF5 dataset to %s...' % path)
-            hf.write_dataset(data)
+            hf.write_dataset(data, task=HDF5.LINK_PREDICTION)
 
     output_writer = None
     ranks_writer = None
