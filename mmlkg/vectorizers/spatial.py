@@ -58,7 +58,7 @@ def generate_data(g, datatypes, time_dim=1):
 
             seen_datatypes.add(datatype_int)
             data[datatype_int].append(vec)
-            data_length[datatype_int].append(len(vec))
+            data_length[datatype_int].append(vec.shape[time_dim])
             data_entity_map[datatype_int].append(e_int)
 
     seen_datatypes = list(seen_datatypes)

@@ -25,7 +25,8 @@ if __name__ == "__main__":
     out_dir = flags.input if flags.output is None else flags.output
     out_dir = out_dir + '/' if not out_dir.endswith('/') else out_dir
 
-    with HDF5(out_dir + 'dataset.h5', 'w') as hf:
+    out_file = out_dir + 'dataset.h5'
+    with HDF5(out_file, 'w') as hf:
         nc_data = dict()
         lp_data = dict()
         for name, item in dataset.generate_dataset(flags):
@@ -50,6 +51,8 @@ if __name__ == "__main__":
                 continue
 
         if len(nc_data) == 4:
-            hf.write_task_data(nc_data)
+            hf.write_task_data(nc_data, HDF5.NODE_CLASSIFICATION)
         if len(lp_data) == 5:
-            hf.write_task_data(lp_data)
+            hf.write_task_data(lp_data, HDF5.LINK_PREDICTION)
+
+    print(f"Dataset saved to {out_file}")

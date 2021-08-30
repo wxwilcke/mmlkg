@@ -238,7 +238,7 @@ def generate_dataset(flags):
     yield ('testing_lp', g.test_lp)
     yield ('validation_lp', g.valid_lp)
     for modality in flags.modalities:
-        print("[%s] Generating data" % modality.upper())
+        print("[%s] Generating data" % modality.upper(), end='')
         datatypes = set()
         if modality == "textual":
             datatypes = set.union(xsd_tree.descendants("string"),
@@ -268,8 +268,9 @@ def generate_dataset(flags):
             data = spatial.generate_data(g, datatypes)
 
         if len(data) <= 0:
-            print(" No information found")
+            print(" - no information found")
             continue
+        print(" - done")
 
         yield (modality, data)
 
