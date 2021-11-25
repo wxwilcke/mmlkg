@@ -218,19 +218,24 @@ class MLP(nn.Module):
                  p_dropout=0.0,
                  bias=False):
         """
-        Multi-Layer Perceptron
+        Multi-Layer Perceptron with 2 hidden layers
 
         """
         super().__init__()
 
         self.p_dropout = p_dropout
-        hidden_dim = output_dim + int((input_dim-output_dim)/2)
+        step_size = (input_dim-output_dim)//3
+        hidden_dims = [output_dim + (2 * step_size),
+                       output_dim + (1 * step_size)]
 
         self.mlp = nn.Sequential(
-            nn.Linear(input_dim, hidden_dim, bias),
+            nn.Linear(input_dim, hidden_dims[0], bias),
             nn.Dropout(p=self.p_dropout),
             nn.Sigmoid(),
-            nn.Linear(hidden_dim, output_dim, bias),
+            nn.Linear(hidden_dims[0], hidden_dims[1], bias),
+            nn.Dropout(p=self.p_dropout),
+            nn.Sigmoid(),
+            nn.Linear(hidden_dims[1], output_dim, bias),
             nn.Dropout(p=self.p_dropout),
             nn.Sigmoid())
 
