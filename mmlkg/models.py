@@ -180,11 +180,6 @@ class NeuralEncoders(nn.Module):
 
         return Y
 
-    def init(self):
-        for encoder in self.encoders.values():
-            for param in encoder.parameters():
-                nn.init.uniform_(param)
-
 
 class FC(nn.Module):
     def __init__(self,
@@ -205,10 +200,6 @@ class FC(nn.Module):
         X = self.fc(X)
 
         return F.dropout(X, p=self.p_dropout)
-
-    def init(self):
-        for param in self.parameters():
-            nn.init.uniform_(param)
 
 
 class MLP(nn.Module):
@@ -238,6 +229,9 @@ class MLP(nn.Module):
             nn.Linear(hidden_dims[1], output_dim, bias),
             nn.Dropout(p=self.p_dropout),
             nn.Sigmoid())
+
+        # initiate weights
+        self.init()
 
     def forward(self, X):
         return self.mlp(X)
@@ -310,19 +304,6 @@ class ImageCNN(nn.Module):
 
     def forward(self, X):
         return self.model(X)
-
-    def init(self):
-        for m in self.model.modules():
-            if isinstance(m, nn.Conv2d):
-                nn.init.kaiming_normal_(m.weight, mode='fan_out')
-                if m.bias is not None:
-                    nn.init.zeros_(m.bias)
-            elif isinstance(m, (nn.BatchNorm2d, nn.GroupNorm)):
-                nn.init.ones_(m.weight)
-                nn.init.zeros_(m.bias)
-            elif isinstance(m, nn.Linear):
-                nn.init.normal_(m.weight, 0, 0.01)
-                nn.init.zeros_(m.bias)
 
 
 class ResidualCNN(nn.Module):
@@ -538,10 +519,6 @@ class TCNN(nn.Module):
 
         return X
 
-    def init(self):
-        for param in self.parameters():
-            nn.init.normal_(param)
-
 
 class RNN(nn.Module):
     def __init__(self,
@@ -572,11 +549,6 @@ class RNN(nn.Module):
 
         return self.fc(X)
 
-    def init(self):
-        sqrt_k = sqrt(1.0/self.hidden_dim)
-        for param in self.parameters():
-            nn.init.uniform_(param, -sqrt_k, sqrt_k)
-
 
 class DistMult(nn.Module):
     def __init__(self,
@@ -604,6 +576,9 @@ class DistMult(nn.Module):
             self.fuse_model = LiteralE(num_entities=num_entities,
                                        embedding_dim=embedding_dim,
                                        **kwargs)
+
+        # initiate weights
+        self.reset_parameters()
 
     def forward(self, X):
         # data := entity to entity triples only;
@@ -642,19 +617,13 @@ class DistMult(nn.Module):
 
         return torch.sum(e * p * u, dim=-1)
 
-    def init(self, one_hot=False):
+    def reset_parameters(self, one_hot=False):
         for name, param in self.named_parameters():
-            if one_hot and name == "node_embeddings":
-                self.node_embeddings = torch.eye(self.node_embeddings.shape[1])
-                continue
-            if one_hot and name == "edge_embeddings":
-                self.edge_embeddings = torch.eye(self.edge_embeddings.shape[1])
-                continue
-
-            nn.init.normal_(param)
-
-        if self.fuse_model is not None:
-            self.fuse_model.init()
+            if name in ["node_embeddings", "edge_embeddings"]:
+                if one_hot:
+                    nn.init.eye_(param)
+                else:
+                    nn.init.normal_(param)
 
 
 class LiteralE(nn.Module):
@@ -667,42 +636,49 @@ class LiteralE(nn.Module):
 
         embedding_dim :: length of entity vector (H in paper)
         feature_dim  :: length of entity feature vector (N_d in paper)
+
+        NB: Different from LiteralE, this implementation lets feature matrix
+            L = N_e x F, where F is a concatenation of the outputs of all
+            relevant encoders.
         """
         super().__init__()
 
-        self.W_ze = nn.Parameter(torch.empty((num_entities,
-                                              embedding_dim,  # transposed
+        self.W_ze = nn.Parameter(torch.empty((embedding_dim,
                                               embedding_dim)))
-        self.W_zl = nn.Parameter(torch.empty((num_entities,
-                                              embedding_dim,  # transposed
-                                              feature_dim)))
+        self.W_zl = nn.Parameter(torch.empty((feature_dim,
+                                              embedding_dim)))
 
         # split W_h in W_he and W_hl for cheaper computation
-        self.W_he = nn.Parameter(torch.empty((num_entities,
-                                              embedding_dim,  # transposed
+        self.W_he = nn.Parameter(torch.empty((embedding_dim,
                                               embedding_dim)))
-        self.W_hl = nn.Parameter(torch.empty((num_entities,
-                                              embedding_dim,  # transposed
-                                              feature_dim)))
+        self.W_hl = nn.Parameter(torch.empty((feature_dim,
+                                              embedding_dim)))
 
         self.b = nn.Parameter(torch.empty((embedding_dim)))
 
-    def forward(self, X):
-        # e := length H
-        # l := length N_d
-        e, l, index = X
+        # initiate weights
+        self.reset_parameters()
 
-        Wze = torch.einsum('nih,nh->ni', self.W_ze[index], e[index])
-        Wzl = torch.einsum('nih,nh->ni', self.W_zl[index], l[index])
-        Whe = torch.einsum('nih,nh->ni', self.W_he[index], e[index])
-        Whl = torch.einsum('nih,nh->ni', self.W_hl[index], l[index])
+    def forward(self, X):
+        # E := length H
+        # L := length F (N_d in paper)
+        E, L, index = X
+
+        Wze = torch.einsum('ij,ki->kj', self.W_ze, E[index])
+        Wzl = torch.einsum('ij,ki->kj', self.W_zl, L[index])
 
         Z = torch.sigmoid(Wze + Wzl + self.b)  # out H
+        del Wze, Wzl
+
+        Whe = torch.einsum('ij,ki->kj', self.W_he, E[index])
+        Whl = torch.einsum('ij,ki->kj', self.W_hl, L[index])
+
         H = torch.tanh(Whe + Whl)  # out H
+        del Whe, Whl
 
-        # compute g
-        return Z * H + (1 - Z) * e[index]
+        # compute result of function g
+        return Z * H + (1 - Z) * E[index]
 
-    def init(self):
+    def reset_parameters(self):
         for param in self.parameters():
             nn.init.normal_(param)

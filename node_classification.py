@@ -177,10 +177,6 @@ def main(dataset, output_writer, label_writer, device, config, flags):
               output_dim=num_classes)
     model = nn.Sequential(encoders, mlp)
 
-    # initialize weights
-    for module in model:
-        module.init()
-
     if "optim" not in config.keys()\
        or sum([len(c) for c in config["optim"].values()]) <= 0:
         optimizer = optim.Adam(model.parameters(),

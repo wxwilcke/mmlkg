@@ -498,10 +498,8 @@ def main(dataset, output_writer, ranks_writer, devices, config, flags):
 
     # move to device and initialize weights
     distmult.to(distmult_device)
-    distmult.init()
     if not flags.featureless:
         encoders.to(encoder_device)
-        encoders.init()
 
     epoch, ranks = train_test_model(model, optimizer, loss,
                                     X, X_idc, splits, epoch,
