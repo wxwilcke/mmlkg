@@ -168,6 +168,8 @@ def main(dataset, output_writer, label_writer, device, config, flags):
             if "p_noise" in modconf.keys() and modconf["p_noise"] > 0:
                 add_noise_(X[modality], modconf["p_noise"], m_noise)
 
+        # TODO: add structure as modality, via RDF2Vec
+
     if len(X) <= 0:
         print("No data found - Exiting")
         sys.exit(1)
