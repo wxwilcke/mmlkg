@@ -23,7 +23,8 @@ setup(
         'numpy',
         'pillow',
         'pandas',
-        'pyhdt',
+        'rdflib',
+        'rdflib_hdt',
         'deep_geometry'
     ],
     packages=['mmlkg'],

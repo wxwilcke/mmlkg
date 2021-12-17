@@ -4,9 +4,9 @@ import argparse
 import csv
 
 import pandas as pd
-from hdt import HDTDocument
-
-from mmlkg.data.rdf import BNode, Literal, IRIRef, parse_statement
+from rdflib import Graph
+from rdflib.term import BNode, Literal, URIRef
+from rdflib_hdt import HDTStore
 
 
 def _solve_literal_allignment(df_triples, node,  node_series,
@@ -45,7 +45,7 @@ def _node_str(node):
 def _node_type(node):
     if isinstance(node, BNode):
         return "blank_node"
-    elif isinstance(node, IRIRef):
+    elif isinstance(node, URIRef):
         return "iri"
     elif isinstance(node, Literal):
         if node.datatype is not None:
@@ -64,10 +64,7 @@ def _generate_context(graphs):
     datatypes = set()
 
     for g in graphs:
-        triples, _ = g.search_triples("", "", "")
-        for triple in triples:
-            s, p, o = parse_statement(triple)
-
+        for s, p, o in g.triples((None, None, None)):
             s_type = _node_type(s)
             o_type = _node_type(o)
 
@@ -93,9 +90,7 @@ def _generate_context(graphs):
 
     triples_int = list()
     for g in graphs:
-        triples, _ = g.search_triples("", "", "")
-        for triple in triples:
-            s, p, o = parse_statement(triple)
+        for s, p, o in g.triples((None, None, None)):
             triples_int.append([e2i[(_node_str(s), _node_type(s))],
                                 r2i[_node_str(p)],
                                 e2i[(_node_str(o), _node_type(o))]])
@@ -148,7 +143,7 @@ def _generate_splits(splits, e2i, r2i):
 
 def generate_node_classification_mapping(flags):
     hdtfile = flags.context
-    g = [HDTDocument(hdtfile)]
+    g = [Graph(store=HDTStore(hdtfile))]
 
     train, test, valid = None, None, None
     if flags.train is not None:
@@ -169,10 +164,10 @@ def _generate_link_prediction_mapping_standalone(flags):
     g_len_list = list()
     for hdtfile in [flags.train, flags.test, flags.valid]:
         if hdtfile is not None:
-            g = HDTDocument(hdtfile)
+            g = Graph(store=HDTStore(hdtfile))
 
             g_list.append(g)
-            g_len_list.append(g.total_triples)
+            g_len_list.append(len(g))
         else:
             g_len_list.append(0)
 
@@ -212,11 +207,8 @@ def generate_link_prediction_mapping(flags):
         if hdtfile is None:
             continue
 
-        g = HDTDocument(hdtfile)
-        triples, _ = g.search_triples("", "", "")
-        for triple in triples:
-            s, p, o = parse_statement(triple)
-
+        g = Graph(store=HDTStore(hdtfile))
+        for s, p, o in g.triples((None, None, None)):
             s_int = df_nodes.loc[_node_str(s)]['index']
             try:
                 p_int = df_relations.loc[_node_str(p)]['index']
