@@ -130,78 +130,114 @@ def compute_ranks_fast(model, node_features, data, heads_and_tails, filtered,
     return ranks + 1
 
 
-def train_once(model, optimizer, loss_function, X, X_idc,
+def train_once(model, optimizer, loss_function, features, entity_idx,
                data, devices, flags):
+    """ data := list of integer-encoded triples mapped to entity_idx index
+        entity_idx := list of integer-encoded entities with original mapping
+    """
     encoders, distmult = model
     encoder_device, distmult_device = devices
 
-    distmult.train()
-    if not flags.featureless:
-        encoders.train()
+    loss_lst = list()
 
-    # sample negative triples by copying and corrupting positive triples
-    num_samples = data.shape[0]
-    num_corrupt = num_samples//5
-    num_corrupt_head = num_corrupt//2
-    num_corrupt_tail = num_corrupt - num_corrupt_head
+    num_entities = len(entity_idx)
+    batches = [slice(begin, min(begin+flags.batchsize, num_entities))
+               for begin in range(0, num_entities, flags.batchsize)]
+    num_batches = len(batches)
 
-    neg_samples_idx = torch.from_numpy(np.random.choice(np.arange(num_samples),
-                                                        num_corrupt,
-                                                        replace=False))
-    corrupted_data = torch.from_numpy(np.copy(data[neg_samples_idx]))
+    # subsets of data with only triples of which entities are part of batch
+    data_batches = list()
+    for batch in batches:
+        idx_array = np.arange(batch.start, batch.stop)
+        data_batches.append(data[np.isin(data[:, 0], idx_array) |
+                                 np.isin(data[:, 2], idx_array)])
 
-    # corrupt elements by replacing them with random elements
-    # note that a small amount may still exist
-    num_nodes = distmult.node_embeddings.shape[0]
-    corrupt_heads = np.random.choice(num_nodes,
-                                     num_corrupt_head,
-                                     replace=True)
-    corrupt_tails = np.random.choice(num_nodes,
-                                     num_corrupt_tail,
-                                     replace=True)
+    corrupt_ratio = 5
+    for batch_id, batch in enumerate(batches):
+        batch_str = " - batch %2.d / %d" % (batch_id+1, num_batches)
+        print(batch_str, end='\b'*len(batch_str), flush=True)
 
-    corrupted_data[:num_corrupt_head, 0] = torch.from_numpy(corrupt_heads)
-    corrupted_data[-num_corrupt_tail:, 2] = torch.from_numpy(corrupt_tails)
+        batch_idx = entity_idx[batch]  # original index
+        batch_data = data_batches[batch_id]
 
-    # create labels; positive samples are 1, negative 0
-    Y = torch.ones((num_samples+num_corrupt), dtype=torch.float32)
-    Y[-num_corrupt:] = 0.
+        # compute feature embeddings
+        feature_embeddings_dev = None
+        if not flags.featureless:
+            encoders.train()
 
-    # compute feature embeddings
-    feature_embeddings = None
-    if not flags.featureless:
-        features = [X, X_idc, encoder_device]
-        feature_embeddings = encoders(features).to(distmult_device)
+            # encoder pass
+            features_batch = [features, batch_idx, encoder_device]
+            encoders(features_batch)
 
-    # compute scores
-    Y_hat = torch.empty((num_samples+num_corrupt), dtype=torch.float32)
+            # we still need the full embedding tensor for LiteralE
+            with torch.no_grad():
+                features_full = [features, entity_idx, encoder_device]
+                feature_embeddings_dev = encoders(features_full).to(distmult_device)
 
-    data_dev = data.to(distmult_device)
-    Y_hat[:num_samples] = distmult([(data_dev[:, 0],
-                                     data_dev[:, 1],
-                                     data_dev[:, 2]),
-                                    feature_embeddings]).to('cpu')
+        i = 0
+        num_samples = batch_data.shape[0]
+        while num_samples < 2*corrupt_ratio:
+            # pick random set if we somehow end up without enough samples
+            batch_data = data_batches[np.random.randint(num_batches)]
+            num_samples = batch_data.shape[0]
 
-    if distmult_device != torch.device('cpu'):
-        # clear GPU memory
-        del data_dev
-        torch.cuda.empty_cache()
+            i += 1
+            if i >= num_batches:  # prevent never-ending loop
+                raise Exception("Not enough samples in distmult batch. "
+                                "Consider increasing the batch size")
 
-    corrupted_data_dev = corrupted_data.to(distmult_device)
-    Y_hat[-num_corrupt:] = distmult([(corrupted_data_dev[:, 0],
-                                      corrupted_data_dev[:, 1],
-                                      corrupted_data_dev[:, 2]),
-                                     feature_embeddings]).to('cpu')
+        # sample negative triples by copying and corrupting positive triples
+        num_corrupt = num_samples//corrupt_ratio
+        num_corrupt_head = num_corrupt//2
+        num_corrupt_tail = num_corrupt - num_corrupt_head
 
-    # compute loss
-    loss = binary_crossentropy(Y_hat, Y, loss_function)
+        neg_samples_idx = torch.from_numpy(np.random.choice(
+            np.arange(num_samples), num_corrupt, replace=False))
+        corrupted_data = torch.from_numpy(np.copy(batch_data[neg_samples_idx]))
 
-    # Zero gradients, perform a backward pass, and update the weights.
-    optimizer.zero_grad()
-    loss.backward()  # training loss
-    optimizer.step()
+        # corrupt elements by replacing them with random elements
+        # note that a small amount may still exist
+        num_nodes = distmult.node_embeddings.shape[0]
+        corrupt_heads = np.random.choice(num_nodes,
+                                         num_corrupt_head,
+                                         replace=True)
+        corrupt_tails = np.random.choice(num_nodes,
+                                         num_corrupt_tail,
+                                         replace=True)
 
-    return float(loss)
+        corrupted_data[:num_corrupt_head, 0] = torch.from_numpy(corrupt_heads)
+        corrupted_data[-num_corrupt_tail:, 2] = torch.from_numpy(corrupt_tails)
+
+        # create labels; positive samples are 1, negative 0
+        Y = torch.ones((num_samples+num_corrupt), dtype=torch.float32)
+        Y[-num_corrupt:] = 0.
+
+        # compute scores
+        distmult.train()
+        Y_hat = torch.empty((num_samples+num_corrupt), dtype=torch.float32)
+
+        data_dev = batch_data.to(distmult_device)
+        Y_hat[:num_samples] = distmult([(data_dev[:, 0],
+                                         data_dev[:, 1],
+                                         data_dev[:, 2]),
+                                        feature_embeddings_dev]).to('cpu')
+
+        corrupted_data_dev = corrupted_data.to(distmult_device)
+        Y_hat[-num_corrupt:] = distmult([(corrupted_data_dev[:, 0],
+                                          corrupted_data_dev[:, 1],
+                                          corrupted_data_dev[:, 2]),
+                                         feature_embeddings_dev]).to('cpu')
+
+        # compute loss
+        batch_loss = binary_crossentropy(Y_hat, Y, loss_function)
+        loss_lst.append(float(batch_loss))
+
+        # Zero gradients, perform a backward pass, and update the weights.
+        optimizer.zero_grad()
+        batch_loss.backward()  # training loss
+        optimizer.step()
+
+    return np.mean(loss_lst)
 
 
 def test_once(model, node_features, data, heads_and_tails, devices, flags):
@@ -443,7 +479,7 @@ def main(dataset, output_writer, ranks_writer, devices, config, flags):
                             literalE=False)
     else:
         print("[MODE] DistMult + LiteralE")
-        encoders = NeuralEncoders(X, config['encoders'], flags)
+        encoders = NeuralEncoders(X, config['encoders'])
         distmult = DistMult(num_entities=len(entities_idc),
                             num_relations=len(relations),
                             literalE=True,
@@ -523,8 +559,8 @@ if __name__ == "__main__":
     t_init = "%d" % (time() * 1e7)
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--batchsize", help="Number of samples in batch",
-                        default=32, type=int)
+    parser.add_argument("--batchsize", help="Number of samples in encoder "
+                        "batch", default=32, type=int)
     parser.add_argument("--batchsize_mrr", help="Number of samples in "
                         + "MRR batch", default=32, type=int)
     parser.add_argument("-c", "--config",

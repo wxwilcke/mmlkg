@@ -22,17 +22,14 @@ _DIM_DEFAULT = {"numerical": 4,
 class NeuralEncoders(nn.Module):
     def __init__(self,
                  dataset,
-                 config,
-                 flags):
+                 config):
         """
         Neural Encoder(s)
 
         """
         super().__init__()
 
-        self.batchsize = flags.batchsize
         self.encoders = nn.ModuleDict()
-        self.modalities = dict()  # map to encoders
         self.positions = dict()
         self.sequence_length = dict()
         self.out_dim = 0
@@ -53,9 +50,6 @@ class NeuralEncoders(nn.Module):
                 else conf["dropout"]
             bias = False if "bias" not in conf.keys()\
                 else conf["bias"]
-
-            if modality not in self.modalities.keys():
-                self.modalities[modality] = list()
 
             data = dataset[modality]
             for mset in data:
@@ -114,7 +108,6 @@ class NeuralEncoders(nn.Module):
                                    bias=bias)
 
                 self.encoders[datatype] = encoder
-                self.modalities[modality].append(encoder)
                 self.sequence_length[datatype] = seq_lengths
                 self.out_dim += inter_dim
 
@@ -122,15 +115,15 @@ class NeuralEncoders(nn.Module):
                 self.positions[datatype] = (pos, pos_new)
                 pos = pos_new
 
-    def forward(self, X):
-        data, split_idc, device = X
+    def forward(self, features):
+        data, batch_idx, device = features
 
-        num_samples = len(split_idc)
-        Y = torch.zeros((num_samples,
-                         self.out_dim), dtype=torch.float32, device=device)
+        batchsize = len(batch_idx)
+        batch_out_dev = torch.zeros((batchsize, self.out_dim),
+                                    dtype=torch.float32, device=device)
         for msets in data.values():
             for mset in msets:
-                datatype, X, X_length, X_idc, is_varlength, time_dim = mset
+                datatype, X, _, X_idx, _, time_dim = mset
                 datatype = datatype.split('/')[-1]
                 if datatype not in self.encoders.keys():
                     continue
@@ -139,45 +132,37 @@ class NeuralEncoders(nn.Module):
                 pos_begin, pos_end = self.positions[datatype]
                 seq_length = self.sequence_length[datatype]
 
-                # skip entities without this modality
-                split_idc_local = [i for i in range(len(split_idc))
-                                   if split_idc[i] in X_idc]
-                split_idc_filtered = split_idc[split_idc_local]
+                # filter entities without this modality
+                # same as intersection, but ensures order
+                batch_idx_local = [i for i in range(len(batch_idx))
+                                   if batch_idx[i] in X_idx]
+                batch_idx_filtered = batch_idx[batch_idx_local]
 
-                # no entities have this datatype
-                if len(split_idc_filtered) <= 0:
+                # skip if no entities have this datatype
+                if len(batch_idx_filtered) <= 0:
                     continue
 
                 # match entity indices to sample indices
-                X_split_idc = [np.where(X_idc == i)[0][0]
-                               for i in split_idc_filtered]
+                X_batch_idx = [np.where(X_idx == i)[0][0]
+                               for i in batch_idx_filtered]
 
-                X = [torch.Tensor(X[i]) for i in X_split_idc]
-                X_length = [X_length[i] for i in X_split_idc]
+                # create batch subset of X in same order as batch_idx_filtered
+                X = [torch.Tensor(X[i]) for i in X_batch_idx]
 
-                batches = list()
-                if is_varlength:
-                    batches = mkbatches_varlength(split_idc_local,
-                                                  X_length,
-                                                  self.batchsize)
-                else:
-                    batches = mkbatches(split_idc_local,
-                                        self.batchsize)
+                # stack individual tensors and pad if different lengths
+                X_batch = torch.stack(zero_pad(X, time_dim, seq_length),
+                                      axis=0)
+                X_batch_dev = X_batch.to(device)
 
-                num_batches = len(batches)
-                for i, (batch_idx, batch_sample_idx) in enumerate(batches, 1):
-                    batch_str = " - batch %2.d / %d" % (i, num_batches)
-                    print(batch_str, end='\b'*len(batch_str), flush=True)
+                # compute output
+                out_dev = encoder(X_batch_dev)
 
-                    X_batch = torch.stack(zero_pad(
-                        [X[b] for b in batch_idx], time_dim, seq_length),
-                        axis=0)
-                    X_batch_dev = X_batch.to(device)
+                # map output to correct position on Y
+                batch_out_idx = [i for i in range(len(batch_idx))
+                                 if batch_idx[i] in batch_idx_filtered]
+                batch_out_dev[batch_out_idx, pos_begin:pos_end] = out_dev
 
-                    out_dev = encoder(X_batch_dev)
-                    Y[batch_sample_idx, pos_begin:pos_end] = out_dev
-
-        return Y
+        return batch_out_dev
 
 
 class FC(nn.Module):
@@ -212,6 +197,9 @@ class MLP(nn.Module):
 
         """
         super().__init__()
+
+        self.input_dim = input_dim
+        self.output_dim = output_dim
 
         self.p_dropout = p_dropout
         step_size = (input_dim-output_dim)//3

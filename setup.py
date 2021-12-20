@@ -10,7 +10,7 @@ def readme():
 
 setup(
     name='mmlkg',
-    version='0.2',
+    version='0.3',
     author='Xander Wilcke',
     author_email='w.x.wilcke@vu.nl',
     url='https://gitlab.com/wxwilcke/mmlkg',
@@ -20,12 +20,14 @@ setup(
     zip_safe=True,
     install_requires=[
         'torch',
+        'torchvision'
         'numpy',
         'pillow',
         'pandas',
         'rdflib',
         'rdflib_hdt',
-        'deep_geometry'
+        'deep_geometry',
+        'h5py'
     ],
     packages=['mmlkg'],
 )

@@ -14,32 +14,56 @@ from mmlkg.data import dataset
 from mmlkg.data.hdf5 import HDF5
 from mmlkg.data.tsv import TSV
 from mmlkg.models import MLP, NeuralEncoders
-from mmlkg.utils import add_noise_, categorical_accuracy
+from mmlkg.utils import add_noise_, categorical_accuracy, zero_pad
 
 
 _MODALITIES = ["textual", "numerical", "temporal", "visual", "spatial"]
 
 
-def run_once(model, optimizer, loss_function, X,
-             samples, device, train=False):
-    samples_idc, Y = samples.T
+def run_once(model, optimizer, loss_function, data,
+             samples, device, flags, train=False):
+    encoders, discriminator = model
+
+    samples_idx, Y = samples.T
+    num_samples = len(samples_idx)
 
     Y = torch.LongTensor(Y)
-    if train:
-        Y_hat = model([X, samples_idc, device]).to("cpu")
-    else:
-        with torch.no_grad():
-            Y_hat = model([X, samples_idc, device]).to("cpu")
+    Y_hat = torch.zeros((num_samples, discriminator.output_dim),
+                        dtype=torch.float32)
 
-    loss = loss_function(Y_hat, Y)
-    acc = categorical_accuracy(Y_hat, Y)
+    loss_lst = list()
+    acc_lst = list()
 
-    if train:
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
+    batches = [slice(begin, min(begin+flags.batchsize, num_samples))
+               for begin in range(0, num_samples, flags.batchsize)]
+    num_batches = len(batches)
+    for batch_id, batch in enumerate(batches, 1):
+        batch_str = " - batch %2.d / %d" % (batch_id, num_batches)
+        print(batch_str, end='\b'*len(batch_str), flush=True)
 
-    return (Y_hat, float(loss), float(acc))
+        batch_idx = samples_idx[batch]
+
+        # encoders
+        batch_out_dev = encoders([data, batch_idx, device])
+
+        # descriminator
+        Y_hat_batch = discriminator(batch_out_dev).to('cpu')
+
+        # evaluate
+        loss_batch = loss_function(Y_hat_batch, Y[batch])
+        acc_batch = categorical_accuracy(Y_hat_batch, Y[batch])
+
+        loss_lst.append(float(loss_batch))
+        acc_lst.append(float(acc_batch))
+
+        if train:
+            optimizer.zero_grad()
+            loss_batch.backward()
+            optimizer.step()
+
+        Y_hat[batch] = Y_hat_batch.detach()
+
+    return (Y_hat, np.mean(loss_lst), np.mean(acc_lst))
 
 
 def train_test_model(model, optimizer, loss, X, splits, epoch,
@@ -67,7 +91,7 @@ def train_test_model(model, optimizer, loss, X, splits, epoch,
         model.train()
         _, train_loss, train_acc = run_once(model, optimizer, loss,
                                             X, training, device,
-                                            train=True)
+                                            flags, train=True)
 
         if flags.L1lambda > 0:
             l1_regularization = torch.tensor(0.)
@@ -91,9 +115,10 @@ def train_test_model(model, optimizer, loss, X, splits, epoch,
         valid_acc = -1
         if not flags.test:
             model.eval()
-            _, valid_loss, valid_acc = run_once(model, None, loss,
-                                                X, validation,
-                                                device)
+            with torch.no_grad():
+                _, valid_loss, valid_acc = run_once(model, None, loss,
+                                                    X, validation,
+                                                    device, flags)
 
             print(" - loss: {:.4f} / acc: {:.4f} \t [VALID] loss: {:.4f} "
                   "/ acc: {:.4f}".format(train_loss, train_acc,
@@ -117,9 +142,10 @@ def train_test_model(model, optimizer, loss, X, splits, epoch,
         model.eval()
 
         t0 = time()
-        Y_hat, test_loss, test_acc = run_once(model, None, loss,
-                                              X, testing,
-                                              device)
+        with torch.no_grad():
+            Y_hat, test_loss, test_acc = run_once(model, None, loss,
+                                                  X, testing, device,
+                                                  flags)
 
         print("[TEST] loss: {:.4f} / acc: {:.4f}".format(test_loss,
                                                          test_acc))
@@ -174,10 +200,10 @@ def main(dataset, output_writer, label_writer, device, config, flags):
         print("No data found - Exiting")
         sys.exit(1)
 
-    encoders = NeuralEncoders(X, config['encoders'], flags)
+    encoders = NeuralEncoders(X, config['encoders'])
     mlp = MLP(input_dim=encoders.out_dim,
               output_dim=num_classes)
-    model = nn.Sequential(encoders, mlp)
+    model = nn.ModuleList([encoders, mlp])
 
     if "optim" not in config.keys()\
        or sum([len(c) for c in config["optim"].values()]) <= 0:
