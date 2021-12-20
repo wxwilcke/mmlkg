@@ -30,6 +30,7 @@ class NeuralEncoders(nn.Module):
         super().__init__()
 
         self.encoders = nn.ModuleDict()
+        self.modalities = dict()
         self.positions = dict()
         self.sequence_length = dict()
         self.out_dim = 0
@@ -38,6 +39,9 @@ class NeuralEncoders(nn.Module):
         for modality in dataset.keys():
             if len(dataset[modality]) <= 0:
                 continue
+
+            if modality not in self.modalities.keys():
+                self.modalities[modality] = list()
 
             conf = dict()
             if modality in config.keys():
@@ -108,6 +112,7 @@ class NeuralEncoders(nn.Module):
                                    bias=bias)
 
                 self.encoders[datatype] = encoder
+                self.modalities[modality].append(encoder)
                 self.sequence_length[datatype] = seq_lengths
                 self.out_dim += inter_dim
 
